@@ -18,7 +18,6 @@
 
 namespace {
 
-
 constexpr const char* kClsParam = "Maru_classifier_opt.param";
 constexpr const char* kClsBin = "Maru_classifier_opt.bin";
 constexpr const char* kAnimeParam = "Maru_anime-x4_opt.param";
@@ -26,13 +25,11 @@ constexpr const char* kAnimeBin = "Maru_anime-x4_opt.bin";
 constexpr const char* kInBlob = "in0";
 constexpr const char* kOutBlob = "out0";
 
-
 constexpr int kScale = 4;
 constexpr int kTileSize = 128;
 constexpr int kTilePad = 10;
 
 
-constexpr int kClsInputSize = 224;
 constexpr int kClsAnimeIndex = 0;
 
 enum Result { kOk = 0, kNotReady = 1, kBadBitmap = 2, kCancelled = 3, kInferFail = 4 };
@@ -133,7 +130,6 @@ Java_com_maru_upscaler_MainActivity_classifyBitmapNative(JNIEnv* env, jobject /*
         static_cast<int>(in.info.stride), kClsInputSize, kClsInputSize);
     if (m.empty()) return -1.f;
 
-    // ImageNet mean/std (สมมติฐาน — ปรับให้ตรงกับตอนเทรน)
     const float mean[3] = {0.485f * 255.f, 0.456f * 255.f, 0.406f * 255.f};
     const float norm[3] = {1.f / (0.229f * 255.f), 1.f / (0.224f * 255.f), 1.f / (0.225f * 255.f)};
     m.substract_mean_normalize(mean, norm);
@@ -174,7 +170,6 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
     if (static_cast<int>(out.info.width) != w * kScale || static_cast<int>(out.info.height) != h * kScale)
         return kBadBitmap;
 
-    
     jmethodID progressMid = nullptr;
     if (progressCb) {
         jclass cls = env->GetObjectClass(progressCb);
@@ -226,7 +221,6 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
                 return kInferFail;
             }
 
-            
             const int ox0 = (x0 - px0) * kScale, oy0 = (y0 - py0) * kScale;
             const int cw = (x1 - x0) * kScale, ch = (y1 - y0) * kScale;
             const int dstX = x0 * kScale, dstY = y0 * kScale;
