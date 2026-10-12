@@ -1,11 +1,10 @@
 name: Maru_Ai
 
-
 on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0)'
+        description: 'ตั้งชื่อเวอร์ชัน'
         required: true
         default: 'v1.0'
 
@@ -32,16 +31,17 @@ jobs:
     - name: Build Release APK
       run: ./gradlew assembleRelease
 
-    
     - name: Upload APK as Artifact
       uses: actions/upload-artifact@v4
       with:
         name: MaruUpscaler-${{ github.event.inputs.version_tag }}
         path: app/build/outputs/apk/release/*.apk
 
-    
     - name: Create GitHub Release and Upload APK
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: ${{ github.event.inputs.
-        
+        tag_name: ${{ github.event.inputs.version_tag }}
+        name: Maru Upscaler ${{ github.event.inputs.version_tag }}
+        files: app/build/outputs/apk/release/*.apk
+        draft: false
+        prerelease: false
