@@ -89,7 +89,8 @@ class MainActivity : ComponentActivity() {
         val context = applicationContext
         val inputStream = context.contentResolver.openInputStream(inputUri) ?: return null
         val tempInputFile = File(context.cacheDir, "input_temp.jpg")
-        tempInputFile.outputStream().use { output ->
+        
+        FileOutputStream(tempInputFile).use { output ->
             inputStream.copyTo(output)
         }
         inputStream.close()
@@ -106,7 +107,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (!success && !tempOutputFile.exists()) {
-            tempInputFile.copyTo(tempOutputFile, overwrite = true)
+            tempInputFile.copyTo(tempOutputFile, true)
         }
 
         val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
@@ -241,7 +242,6 @@ fun MainScreen(
                             Text(text = statusText, fontSize = 12.sp, color = Color.Gray)
                         }
                     } else {
-                        
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -254,7 +254,6 @@ fun MainScreen(
                                     }
                                 }
                         ) {
-                            
                             if (resultImageFile != null) {
                                 Image(
                                     painter = rememberAsyncImagePainter(resultImageFile),
@@ -269,7 +268,6 @@ fun MainScreen(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                
                 if (resultImageFile != null && !isProcessing) {
                     Button(
                         onClick = {
