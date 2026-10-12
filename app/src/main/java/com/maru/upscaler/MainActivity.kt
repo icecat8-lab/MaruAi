@@ -108,8 +108,7 @@ class MainActivity : ComponentActivity() {
         }
 
         if (!success || !tempOutputFile.exists()) {
-            // สำรองข้อมูลไฟล์เดิมกรณีเกิดข้อผิดพลาดในการประมวลผล Native
-            FileInputStream(tempInputFile).use { input ->
+            tempInputFile.inputStream().use { input ->
                 FileOutputStream(tempOutputFile).use { output ->
                     input.copyTo(output)
                 }
@@ -135,7 +134,7 @@ class MainActivity : ComponentActivity() {
             val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
             imageUri?.let { uri ->
                 resolver.openOutputStream(uri)?.use { outputStream ->
-                    FileOutputStream(file).use { inputStream ->
+                    FileInputStream(file).use { inputStream ->
                         inputStream.copyTo(outputStream)
                     }
                 }
