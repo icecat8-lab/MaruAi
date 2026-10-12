@@ -106,8 +106,8 @@ class MainActivity : ComponentActivity() {
             false
         }
 
-        if (!success && !tempOutputFile.exists()) {
-            tempInputFile.copyTo(tempOutputFile, true)
+        if (!success || !tempOutputFile.exists()) {
+            tempInputFile.copyTo(tempOutputFile, overwrite = true)
         }
 
         val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
