@@ -35,6 +35,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Locale
 
@@ -107,7 +108,12 @@ class MainActivity : ComponentActivity() {
         }
 
         if (!success || !tempOutputFile.exists()) {
-            tempInputFile.copyTo(tempOutputFile, overwrite = true)
+            // สำรองข้อมูลไฟล์เดิมกรณีเกิดข้อผิดพลาดในการประมวลผล Native
+            FileInputStream(tempInputFile).use { input ->
+                FileOutputStream(tempOutputFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
         }
 
         val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
