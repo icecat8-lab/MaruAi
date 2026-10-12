@@ -6,12 +6,14 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,12 +25,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -36,14 +40,12 @@ import java.util.Locale
 
 class MainActivity : ComponentActivity() {
 
-    // โหลดไลบรารี C++ (NCNN AI Engine) ที่คอมไพล์ไว้
     companion object {
         init {
             System.loadLibrary("maru_upscaler")
         }
     }
 
-    // Native Method สำหรับเรียกใช้ C++ NCNN AI
     external fun upscaleImageNative(inputPath: String, outputPath: String): Boolean
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -73,6 +75,9 @@ class MainActivity : ComponentActivity() {
                         onLangChange = { currentLang = it },
                         onUpscale = { inputUri, onProgress ->
                             runAiUpscale(inputUri, onProgress)
+                        },
+                        onSaveToGallery = { file ->
+                            saveImageToGallery(file)
                         }
                     )
                 }
@@ -80,7 +85,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun runAiUpscale(inputUri: Uri, onProgress: (Int, String) -> Unit): Uri? {
+    private fun runAiUpscale(inputUri: Uri, onProgress: (Int, String) -> Unit): File? {
         val context = applicationContext
         val inputStream = context.contentResolver.openInputStream(inputUri) ?: return null
         val tempInputFile = File(context.cacheDir, "input_temp.jpg")
@@ -90,11 +95,10 @@ class MainActivity : ComponentActivity() {
         inputStream.close()
 
         val tempOutputFile = File(context.cacheDir, "output_upscaled.jpg")
-
         val startTime = System.currentTimeMillis()
+        
         onProgress(10, if (Locale.getDefault().language == "th") "กำลังเตรียม AI โมเดล..." else "Initializing AI Model...")
 
-        // เรียกใช้งาน C++ Native NCNN ประมวลผลจริง
         val success = try {
             upscaleImageNative(tempInputFile.absolutePath, tempOutputFile.absolutePath)
         } catch (e: Exception) {
@@ -102,35 +106,37 @@ class MainActivity : ComponentActivity() {
         }
 
         if (!success && !tempOutputFile.exists()) {
-            // Fallback กรณี Native มีปัญหา ให้คัดลอกไฟล์เดิมกันแอปเด้ง
             tempInputFile.copyTo(tempOutputFile, overwrite = true)
         }
 
         val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
         onProgress(100, String.format(if (Locale.getDefault().language == "th") "เสร็จสิ้นใน %.1f วินาที" else "Done in %.1f s", elapsed))
 
-        // บันทึกลงแกลเลอรีอัตโนมัติทันทีเมื่อเสร็จ
-        return saveImageToGallery(tempOutputFile)
+        return tempOutputFile
     }
 
-    private fun saveImageToGallery(file: File): Uri? {
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "MaruUpscale_${System.currentTimeMillis()}.jpg")
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/MaruUpscaler")
-            }
-        }
-        val resolver = contentResolver
-        val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-        imageUri?.let { uri ->
-            resolver.openOutputStream(uri)?.use { outputStream ->
-                FileOutputStream(file).use { inputStream ->
-                    inputStream.copyTo(outputStream)
+    private fun saveImageToGallery(file: File): Boolean {
+        return try {
+            val contentValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "MaruUpscale_${System.currentTimeMillis()}.jpg")
+                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/MaruUpscaler")
                 }
             }
+            val resolver = contentResolver
+            val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+            imageUri?.let { uri ->
+                resolver.openOutputStream(uri)?.use { outputStream ->
+                    FileOutputStream(file).use { inputStream ->
+                        inputStream.copyTo(outputStream)
+                    }
+                }
+                true
+            } ?: false
+        } catch (e: Exception) {
+            false
         }
-        return imageUri
     }
 }
 
@@ -141,34 +147,38 @@ fun MainScreen(
     onThemeChange: (Int) -> Unit,
     currentLang: String,
     onLangChange: (String) -> Unit,
-    onUpscale: suspend (Uri, (Int, String) -> Unit) -> Uri?
+    onUpscale: suspend (Uri, (Int, String) -> Unit) -> File?,
+    onSaveToGallery: (File) -> Boolean
 ) {
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-    var resultImageUri by remember { mutableStateOf<Uri?>(null) }
+    var resultImageFile by remember { mutableStateOf<File?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0) }
     var statusText by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
+    var sliderPosition by remember { mutableStateOf(0.5f) }
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
 
     val launcher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
             selectedImageUri = it
-            resultImageUri = null
+            resultImageFile = null
             isProcessing = true
             progress = 0
             statusText = if (currentLang == "th") "กำลังประมวลผล..." else "Processing..."
 
-            // รันการประมวลผล AI จริงแบบ Background Thread
-            kotlinx.coroutines.GlobalScope.launch(Dispatchers.Main) {
-                val outputUri = withContext(Dispatchers.IO) {
+            coroutineScope.launch(Dispatchers.Main) {
+                val outputFile = withContext(Dispatchers.IO) {
                     onUpscale(it) { prog, text ->
                         progress = prog
                         statusText = text
                     }
                 }
-                resultImageUri = outputUri
+                resultImageFile = outputFile
                 isProcessing = false
             }
         }
@@ -177,14 +187,12 @@ fun MainScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Text(text = "Maru Upscaler", fontSize = 18.sp)
-                },
+                title = { Text(text = "Maru Upscaler", fontSize = 18.sp) },
                 navigationIcon = {
                     if (selectedImageUri != null) {
                         IconButton(onClick = {
                             selectedImageUri = null
-                            resultImageUri = null
+                            resultImageFile = null
                             isProcessing = false
                         }) {
                             Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
@@ -233,26 +241,66 @@ fun MainScreen(
                             Text(text = statusText, fontSize = 12.sp, color = Color.Gray)
                         }
                     } else {
-                        Image(
-                            painter = rememberAsyncImagePainter(resultImageUri ?: selectedImageUri),
-                            contentDescription = "Upscaled Image",
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Fit
-                        )
+                        
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    detectHorizontalDragGestures { change, _ ->
+                                        val width = size.width.toFloat()
+                                        if (width > 0f) {
+                                            sliderPosition = (sliderPosition + (change.position.x / width) - 0.5f).coerceIn(0f, 1f)
+                                        }
+                                    }
+                                }
+                        ) {
+                            
+                            if (resultImageFile != null) {
+                                Image(
+                                    painter = rememberAsyncImagePainter(resultImageFile),
+                                    contentDescription = "After",
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                Button(
-                    onClick = { launcher.launch("image/*") },
-                    enabled = !isProcessing,
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier
-                        .width(180.dp)
-                        .height(45.dp)
-                ) {
-                    Text(text = if (currentLang == "th") "เลือกรูปภาพ" else "Select Image")
+                
+                if (resultImageFile != null && !isProcessing) {
+                    Button(
+                        onClick = {
+                            resultImageFile?.let { file ->
+                                val success = onSaveToGallery(file)
+                                val msg = if (success) {
+                                    if (currentLang == "th") "บันทึกรูปภาพเรียบร้อย!" else "Image saved successfully!"
+                                } else {
+                                    if (currentLang == "th") "บันทึกไม่สำเร็จ" else "Failed to save"
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .width(180.dp)
+                            .height(45.dp)
+                    ) {
+                        Text(text = if (currentLang == "th") "บันทึกภาพ" else "Save Image")
+                    }
+                } else {
+                    Button(
+                        onClick = { launcher.launch("image/*") },
+                        enabled = !isProcessing,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .width(180.dp)
+                            .height(45.dp)
+                    ) {
+                        Text(text = if (currentLang == "th") "เลือกรูปภาพ" else "Select Image")
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
