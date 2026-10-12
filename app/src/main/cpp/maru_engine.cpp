@@ -1,20 +1,3 @@
-// maru_engine.cpp — Maru Upscaler native engine (NCNN + JNI)
-//
-// สัญญากับฝั่ง Kotlin (ใน class MainActivity):
-//
-//   fun interface MaruProgress { fun onProgress(percent: Int) }
-//
-//   external fun initEngineNative(assetManager: android.content.res.AssetManager): Int
-//       -> bitmask: bit0 (1) = classifier โหลดได้, bit1 (2) = anime upscaler โหลดได้, 0 = ล้มเหลวทั้งหมด
-//   external fun classifyBitmapNative(input: Bitmap): Float
-//       -> ความน่าจะเป็นว่าเป็นภาพอนิเมะ 0..1, หรือ -1 ถ้าล้มเหลว
-//   external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, cb: MaruProgress?): Int
-//       -> 0 สำเร็จ, 1 โมเดลไม่พร้อม, 2 bitmap ไม่ถูกต้อง, 3 ถูกยกเลิก, 4 อนุมานล้มเหลว
-//   external fun cancelNative()
-//
-// ข้อกำหนด: bitmap ทั้งสองต้องเป็น ARGB_8888 และ output ต้องกว้าง/สูง = input x 4 พอดี
-// การ decode/encode ไฟล์ (JPEG/PNG, EXIF) ทำฝั่ง Kotlin ด้วย BitmapFactory
-
 #include <jni.h>
 #include <android/asset_manager_jni.h>
 #include <android/bitmap.h>
@@ -35,7 +18,7 @@
 
 namespace {
 
-// ชื่อไฟล์ใน assets และชื่อ blob (ค่าเริ่มต้นของ pnnx -> ncnn คือ in0 / out0)
+
 constexpr const char* kClsParam = "Maru_classifier_opt.param";
 constexpr const char* kClsBin = "Maru_classifier_opt.bin";
 constexpr const char* kAnimeParam = "Maru_anime-x4_opt.param";
@@ -43,13 +26,12 @@ constexpr const char* kAnimeBin = "Maru_anime-x4_opt.bin";
 constexpr const char* kInBlob = "in0";
 constexpr const char* kOutBlob = "out0";
 
-// อัปสเกล x4 แบบแบ่ง tile: แกนกลาง 128px + ขอบ 10px กันรอยต่อ
+
 constexpr int kScale = 4;
 constexpr int kTileSize = 128;
 constexpr int kTilePad = 10;
 
-// classifier: ขนาดอินพุตและ index ของคลาส "anime"
-// !! สมมติฐานที่ยังไม่ได้ยืนยันจากไฟล์โมเดล — ตรวจให้ตรงกับตอนเทรน !!
+
 constexpr int kClsInputSize = 224;
 constexpr int kClsAnimeIndex = 0;
 
@@ -112,7 +94,7 @@ inline uint8_t toByte(float v) {
     return static_cast<uint8_t>(x);
 }
 
-}  // namespace
+}  
 
 extern "C" {
 
@@ -127,7 +109,7 @@ Java_com_maru_upscaler_MainActivity_initEngineNative(JNIEnv* env, jobject /*thiz
         return 0;
     }
 
-    ncnn::set_cpu_powersave(2);  // ใช้ big cores
+    ncnn::set_cpu_powersave(2);
 
     int flags = 0;
     if (loadNet(g_cls, mgr, kClsParam, kClsBin)) flags |= 1;
@@ -192,7 +174,7 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
     if (static_cast<int>(out.info.width) != w * kScale || static_cast<int>(out.info.height) != h * kScale)
         return kBadBitmap;
 
-    // callback (ไม่บังคับ)
+    
     jmethodID progressMid = nullptr;
     if (progressCb) {
         jclass cls = env->GetObjectClass(progressCb);
@@ -244,7 +226,7 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
                 return kInferFail;
             }
 
-            // ตัดขอบ pad ทิ้ง แล้วเขียนลง bitmap ปลายทาง
+            
             const int ox0 = (x0 - px0) * kScale, oy0 = (y0 - py0) * kScale;
             const int cw = (x1 - x0) * kScale, ch = (y1 - y0) * kScale;
             const int dstX = x0 * kScale, dstY = y0 * kScale;
@@ -278,4 +260,4 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
     return kOk;
 }
 
-}  // extern "C"
+}  
