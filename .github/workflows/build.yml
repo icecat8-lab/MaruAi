@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน'
+        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0-debug)'
         required: true
-        default: 'v1.0'
+        default: 'v1.0-debug'
 
 jobs:
   build-and-release:
@@ -41,20 +41,20 @@ jobs:
         gradle wrapper --gradle-version 8.11.1
         chmod +x gradlew
 
-    - name: Build Release APK
-      run: ./gradlew assembleRelease --no-daemon
+    - name: Build Debug APK
+      run: ./gradlew assembleDebug --no-daemon
 
     - name: Upload APK as Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: MaruUpscaler-${{ github.event.inputs.version_tag }}
-        path: app/build/outputs/apk/release/*.apk
+        name: MaruUpscaler-Debug-${{ github.event.inputs.version_tag }}
+        path: app/build/outputs/apk/debug/*.apk
 
     - name: Create GitHub Release and Upload APK
       uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ github.event.inputs.version_tag }}
-        name: Maru Upscaler ${{ github.event.inputs.version_tag }}
-        files: app/build/outputs/apk/release/*.apk
+        name: Maru Upscaler Debug ${{ github.event.inputs.version_tag }}
+        files: app/build/outputs/apk/debug/*.apk
         draft: false
         prerelease: false
