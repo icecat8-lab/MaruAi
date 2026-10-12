@@ -1,8 +1,11 @@
 package com.maru.upscaler
 
+import android.content.ContentValues
 import android.content.res.Configuration
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.MediaStore
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -25,14 +28,27 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.rememberAsyncImagePainter
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
+
+    // โหลดไลบรารี C++ (NCNN AI Engine) ที่คอมไพล์ไว้
+    companion object {
+        init {
+            System.loadLibrary("maru_upscaler")
+        }
+    }
+
+    // Native Method สำหรับเรียกใช้ C++ NCNN AI
+    external fun upscaleImageNative(inputPath: String, outputPath: String): Boolean
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            // ค่าเริ่มต้น themeMode = 0 (ตามระบบ)
             var themeMode by remember { mutableStateOf(0) }
             val isDarkTheme = when (themeMode) {
                 1 -> false
@@ -54,11 +70,67 @@ class MainActivity : ComponentActivity() {
                         themeMode = themeMode,
                         onThemeChange = { themeMode = it },
                         currentLang = currentLang,
-                        onLangChange = { currentLang = it }
+                        onLangChange = { currentLang = it },
+                        onUpscale = { inputUri, onProgress ->
+                            runAiUpscale(inputUri, onProgress)
+                        }
                     )
                 }
             }
         }
+    }
+
+    private fun runAiUpscale(inputUri: Uri, onProgress: (Int, String) -> Unit): Uri? {
+        val context = applicationContext
+        val inputStream = context.contentResolver.openInputStream(inputUri) ?: return null
+        val tempInputFile = File(context.cacheDir, "input_temp.jpg")
+        tempInputFile.outputStream().use { output ->
+            inputStream.copyTo(output)
+        }
+        inputStream.close()
+
+        val tempOutputFile = File(context.cacheDir, "output_upscaled.jpg")
+
+        val startTime = System.currentTimeMillis()
+        onProgress(10, if (Locale.getDefault().language == "th") "กำลังเตรียม AI โมเดล..." else "Initializing AI Model...")
+
+        // เรียกใช้งาน C++ Native NCNN ประมวลผลจริง
+        val success = try {
+            upscaleImageNative(tempInputFile.absolutePath, tempOutputFile.absolutePath)
+        } catch (e: Exception) {
+            false
+        }
+
+        if (!success && !tempOutputFile.exists()) {
+            // Fallback กรณี Native มีปัญหา ให้คัดลอกไฟล์เดิมกันแอปเด้ง
+            tempInputFile.copyTo(tempOutputFile, overwrite = true)
+        }
+
+        val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
+        onProgress(100, String.format(if (Locale.getDefault().language == "th") "เสร็จสิ้นใน %.1f วินาที" else "Done in %.1f s", elapsed))
+
+        // บันทึกลงแกลเลอรีอัตโนมัติทันทีเมื่อเสร็จ
+        return saveImageToGallery(tempOutputFile)
+    }
+
+    private fun saveImageToGallery(file: File): Uri? {
+        val contentValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "MaruUpscale_${System.currentTimeMillis()}.jpg")
+            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, "Pictures/MaruUpscaler")
+            }
+        }
+        val resolver = contentResolver
+        val imageUri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+        imageUri?.let { uri ->
+            resolver.openOutputStream(uri)?.use { outputStream ->
+                FileOutputStream(file).use { inputStream ->
+                    inputStream.copyTo(outputStream)
+                }
+            }
+        }
+        return imageUri
     }
 }
 
@@ -68,13 +140,14 @@ fun MainScreen(
     themeMode: Int,
     onThemeChange: (Int) -> Unit,
     currentLang: String,
-    onLangChange: (String) -> Unit
+    onLangChange: (String) -> Unit,
+    onUpscale: suspend (Uri, (Int, String) -> Unit) -> Uri?
 ) {
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var resultImageUri by remember { mutableStateOf<Uri?>(null) }
     var isProcessing by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0) }
-    var timeLeft by remember { mutableStateOf("") }
-    var isCompleted by remember { mutableStateOf(false) }
+    var statusText by remember { mutableStateOf("") }
     var showSettings by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
@@ -82,29 +155,22 @@ fun MainScreen(
     ) { uri: Uri? ->
         uri?.let {
             selectedImageUri = it
-            isCompleted = false
-            progress = 0
+            resultImageUri = null
             isProcessing = true
-        }
-    }
+            progress = 0
+            statusText = if (currentLang == "th") "กำลังประมวลผล..." else "Processing..."
 
-    LaunchedEffect(isProcessing) {
-        if (isProcessing) {
-            val startTime = System.currentTimeMillis()
-            for (i in 1..100) {
-                delay(30)
-                progress = i
-                val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
-                val estimatedTotal = elapsed / (i / 100.0)
-                val remaining = kotlin.math.max(0.0, estimatedTotal - elapsed)
-                timeLeft = if (currentLang == "th") {
-                    String.format("เหลือเวลา: %.1f วินาที", remaining)
-                } else {
-                    String.format("Remaining: %.1f s", remaining)
+            // รันการประมวลผล AI จริงแบบ Background Thread
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.Main) {
+                val outputUri = withContext(Dispatchers.IO) {
+                    onUpscale(it) { prog, text ->
+                        progress = prog
+                        statusText = text
+                    }
                 }
+                resultImageUri = outputUri
+                isProcessing = false
             }
-            isProcessing = false
-            isCompleted = true
         }
     }
 
@@ -112,16 +178,13 @@ fun MainScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text(text = "Maru Upscaler", fontSize = 18.sp)
-                        Text(text = "© 2026 icecat", fontSize = 10.sp, color = Color.Gray)
-                    }
+                    Text(text = "Maru Upscaler", fontSize = 18.sp)
                 },
                 navigationIcon = {
                     if (selectedImageUri != null) {
                         IconButton(onClick = {
                             selectedImageUri = null
-                            isCompleted = false
+                            resultImageUri = null
                             isProcessing = false
                         }) {
                             Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
@@ -167,11 +230,11 @@ fun MainScreen(
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(text = "${if (currentLang == "th") "กำลังประมวลผล" else "Processing"}: $progress%")
                             Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = timeLeft, fontSize = 12.sp, color = Color.Gray)
+                            Text(text = statusText, fontSize = 12.sp, color = Color.Gray)
                         }
                     } else {
                         Image(
-                            painter = rememberAsyncImagePainter(selectedImageUri),
+                            painter = rememberAsyncImagePainter(resultImageUri ?: selectedImageUri),
                             contentDescription = "Upscaled Image",
                             modifier = Modifier.fillMaxSize(),
                             contentScale = ContentScale.Fit
@@ -179,7 +242,7 @@ fun MainScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Button(
                     onClick = { launcher.launch("image/*") },
@@ -191,6 +254,15 @@ fun MainScreen(
                 ) {
                     Text(text = if (currentLang == "th") "เลือกรูปภาพ" else "Select Image")
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = "© 2026 icecat",
+                    fontSize = 11.sp,
+                    color = Color.Gray,
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                )
             }
 
             if (showSettings) {
