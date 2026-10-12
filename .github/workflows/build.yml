@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0)'
+        description: 'ตั้งชื่อเวอร์ชัน'
         required: true
         default: 'v1.0'
 
@@ -27,14 +27,30 @@ jobs:
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
-      with:
-        gradle-version: '8.1.0'
       
-    - name: Generate Gradle Wrapper
-      run: gradle wrapper --gradle-version 8.1.0 --distribution-type bin
+    - name: Generate Gradle Wrapper Safely
+      run: |
+        gradle wrapper --gradle-version 8.1.0 --distribution-type bin
+        chmod +x gradlew
+
+    - name: Verify Project Structure
+      run: |
+        echo "Checking directory structure..."
+        ls -la
+        if [ ! -f "settings.gradle" ]; then
+          echo "Error: settings.gradle is missing!"
+          exit 1
+        fi
 
     - name: Build Release APK
-      run: ./gradlew assembleRelease
+      run: ./gradlew assembleRelease --no-daemon
+
+    - name: Verify APK Existence
+      run: |
+        if [ ! -f "app/build/outputs/apk/release/app-release.unsigned.apk" ] && [ ! -f "app/build/outputs/apk/release/app-release.apk" ]; then
+          echo "Checking built APK paths:"
+          find app/build/outputs/apk/ -name "*.apk"
+        fi
 
     - name: Upload APK as Artifact
       uses: actions/upload-artifact@v4
