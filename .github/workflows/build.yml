@@ -4,21 +4,21 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0-debug)'
+        description: 'ตั้งชื่อเวอร์ชัน'
         required: true
-        default: 'v1.0-debug'
+        default: 'v1.0'
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
-    
+
     permissions:
       contents: write
 
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
-    
+
     - name: Set up JDK 17
       uses: actions/setup-java@v4
       with:
@@ -35,6 +35,21 @@ jobs:
         echo "android.useAndroidX=true" >> gradle.properties
         echo "android.enableJetifier=true" >> gradle.properties
         echo "android.suppressUnsupportedCompileSdk=34" >> gradle.properties
+
+    - name: Download NCNN prebuilt (Android)
+      env:
+        GH_TOKEN: ${{ github.token }}
+        NCNN_TAG: ''
+      run: |
+        set -e
+        mkdir -p /tmp/ncnn_dl /tmp/ncnn_x
+        gh release download ${NCNN_TAG:+$NCNN_TAG} --repo Tencent/ncnn --pattern 'ncnn-*-android.zip' --dir /tmp/ncnn_dl
+        unzip -q /tmp/ncnn_dl/ncnn-*-android.zip -d /tmp/ncnn_x
+        SRC="$(find /tmp/ncnn_x -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+        mkdir -p app/src/main/cpp
+        rm -rf app/src/main/cpp/ncnn
+        mv "$SRC" app/src/main/cpp/ncnn
+        test -d app/src/main/cpp/ncnn/arm64-v8a/lib/cmake/ncnn
 
     - name: Generate Gradle Wrapper
       run: |
