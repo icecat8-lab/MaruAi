@@ -30,6 +30,12 @@ jobs:
       with:
         gradle-version: '8.11.1'
 
+    - name: Configure Gradle Properties
+      run: |
+        echo "android.useAndroidX=true" >> gradle.properties
+        echo "android.enableJetifier=true" >> gradle.properties
+        echo "android.suppressUnsupportedCompileSdk=34" >> gradle.properties
+
     - name: Generate Gradle Wrapper
       run: |
         gradle wrapper --gradle-version 8.11.1
