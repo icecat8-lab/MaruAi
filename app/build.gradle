@@ -6,6 +6,7 @@ plugins {
 android {
     namespace 'com.maru.upscaler'
     compileSdk 34
+    ndkVersion '26.3.11579264'
 
     defaultConfig {
         applicationId "com.maru.upscaler"
@@ -13,14 +14,16 @@ android {
         targetSdk 34
         versionCode 1
         versionName "1.0"
-        
+
         ndk {
+            
             abiFilters 'arm64-v8a'
         }
-        
+
         externalNativeBuild {
             cmake {
                 cppFlags "-std=c++17 -frtti -fexceptions"
+                arguments "-DANDROID_STL=c++_static"
             }
         }
     }
@@ -29,7 +32,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
-    
+
     kotlinOptions {
         jvmTarget = '17'
     }
@@ -40,7 +43,11 @@ android {
     composeOptions {
         kotlinCompilerExtensionVersion '1.5.0'
     }
-    
+
+    androidResources {
+        noCompress 'bin', 'param'
+    }
+
     externalNativeBuild {
         cmake {
             path "src/main/cpp/CMakeLists.txt"
@@ -51,10 +58,12 @@ android {
 
 dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.exifinterface:exifinterface:1.3.7'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.6.2'
     implementation 'androidx.activity:activity-compose:1.8.0'
     implementation platform('androidx.compose:compose-bom:2023.10.01')
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.material3:material3'
-    implementation 'io.coil-kt:coil-compose:2.5.0'
+    implementation 'androidx.compose.material:material-icons-core'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
 }
