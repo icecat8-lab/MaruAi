@@ -43,7 +43,11 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         init {
-            System.loadLibrary("maru_upscaler")
+            try {
+                System.loadLibrary("maru_upscaler")
+            } catch (e: UnsatisfiedLinkError) {
+                // ป้องกันแอปเด้งกรณีหาไฟล์ .so ไม่เจอ
+            }
         }
     }
 
@@ -87,38 +91,42 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun runAiUpscale(inputUri: Uri, onProgress: (Int, String) -> Unit): File? {
-        val context = applicationContext
-        val inputStream = context.contentResolver.openInputStream(inputUri) ?: return null
-        val tempInputFile = File(context.cacheDir, "input_temp.jpg")
-        
-        FileOutputStream(tempInputFile).use { output ->
-            inputStream.copyTo(output)
-        }
-        inputStream.close()
+        try {
+            val context = applicationContext
+            val inputStream = context.contentResolver.openInputStream(inputUri) ?: return null
+            val tempInputFile = File(context.cacheDir, "input_temp.jpg")
+            
+            FileOutputStream(tempInputFile).use { output ->
+                inputStream.copyTo(output)
+            }
+            inputStream.close()
 
-        val tempOutputFile = File(context.cacheDir, "output_upscaled.jpg")
-        val startTime = System.currentTimeMillis()
-        
-        onProgress(10, if (Locale.getDefault().language == "th") "กำลังเตรียม AI โมเดล..." else "Initializing AI Model...")
+            val tempOutputFile = File(context.cacheDir, "output_upscaled.jpg")
+            val startTime = System.currentTimeMillis()
+            
+            onProgress(30, if (Locale.getDefault().language == "th") "กำลังประมวลผลภาพ..." else "Processing image...")
 
-        val success = try {
-            upscaleImageNative(tempInputFile.absolutePath, tempOutputFile.absolutePath)
-        } catch (e: Exception) {
-            false
-        }
+            val success = try {
+                upscaleImageNative(tempInputFile.absolutePath, tempOutputFile.absolutePath)
+            } catch (e: Exception) {
+                false
+            }
 
-        if (!success || !tempOutputFile.exists()) {
-            tempInputFile.inputStream().use { input ->
-                FileOutputStream(tempOutputFile).use { output ->
-                    input.copyTo(output)
+            if (!success || !tempOutputFile.exists()) {
+                tempInputFile.inputStream().use { input ->
+                    FileOutputStream(tempOutputFile).use { output ->
+                        input.copyTo(output)
+                    }
                 }
             }
+
+            val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
+            onProgress(100, String.format(if (Locale.getDefault().language == "th") "เสร็จสิ้นใน %.1f วินาที" else "Done in %.1f s", elapsed))
+
+            return tempOutputFile
+        } catch (e: Exception) {
+            return null
         }
-
-        val elapsed = (System.currentTimeMillis() - startTime) / 1000.0
-        onProgress(100, String.format(if (Locale.getDefault().language == "th") "เสร็จสิ้นใน %.1f วินาที" else "Done in %.1f s", elapsed))
-
-        return tempOutputFile
     }
 
     private fun saveImageToGallery(file: File): Boolean {
@@ -175,7 +183,7 @@ fun MainScreen(
             resultImageFile = null
             isProcessing = true
             progress = 0
-            statusText = if (currentLang == "th") "กำลังประมวลผล..." else "Processing..."
+            statusText = if (currentLang == "th") "กำลังเตรียม..." else "Preparing..."
 
             coroutineScope.launch(Dispatchers.Main) {
                 val outputFile = withContext(Dispatchers.IO) {
@@ -184,7 +192,11 @@ fun MainScreen(
                         statusText = text
                     }
                 }
-                resultImageFile = outputFile
+                if (outputFile != null && outputFile.exists()) {
+                    resultImageFile = outputFile
+                } else {
+                    Toast.makeText(context, if (currentLang == "th") "เกิดข้อผิดพลาดในการประมวลผล" else "Processing error", Toast.LENGTH_SHORT).show()
+                }
                 isProcessing = false
             }
         }
