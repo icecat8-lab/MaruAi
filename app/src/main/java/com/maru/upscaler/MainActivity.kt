@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
             try {
                 System.loadLibrary("maru_upscaler")
             } catch (e: UnsatisfiedLinkError) {
-                
+                // ป้องกันแอปเด้งกรณีหาไลบรารีไม่เจอ
             }
         }
     }
@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
 
             val systemLang = Locale.getDefault().language
             var currentLang by remember { mutableStateOf(if (systemLang == "th") "th" else "en") }
-            var selectedModel by remember { mutableStateOf(0) } // 0: Anime, 1: Classifier/Standard
+            var selectedModel by remember { mutableStateOf(0) }
 
             MaterialTheme(
                 colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
@@ -209,7 +209,6 @@ fun MainScreen(
     }
 
     if (showSettings) {
-        
         Surface(
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background
@@ -228,25 +227,25 @@ fun MainScreen(
                         Icon(imageVector = Icons.Default.Close, contentDescription = "Close Settings")
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(text = if (currentLang == "th") "Settings" else "Settings", fontSize = 22.sp)
+                    Text(text = "Settings", fontSize = 22.sp)
                 }
 
                 Divider()
 
-                Text(text = if (currentLang == "th") "App Theme" else "App Theme", fontSize = 16.sp, color = Color.Gray)
+                Text(text = "App Theme", fontSize = 16.sp, color = Color.Gray)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { onThemeChange(0) }, enabled = themeMode != 0) { Text("System") }
                     Button(onClick = { onThemeChange(1) }, enabled = themeMode != 1) { Text("Light") }
                     Button(onClick = { onThemeChange(2) }, enabled = themeMode != 2) { Text("Dark") }
                 }
 
-                Text(text = if (currentLang == "th") "Language" else "Language", fontSize = 16.sp, color = Color.Gray)
+                Text(text = "Language", fontSize = 16.sp, color = Color.Gray)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { onLangChange("th") }, enabled = currentLang != "th") { Text("ไทย") }
                     Button(onClick = { onLangChange("en") }, enabled = currentLang != "en") { Text("English") }
                 }
 
-                Text(text = if (currentLang == "th") "AI Model" else "AI Model", fontSize = 16.sp, color = Color.Gray)
+                Text(text = "AI Model", fontSize = 16.sp, color = Color.Gray)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(onClick = { onModelChange(0) }, enabled = selectedModel != 0) { Text("Anime") }
                     Button(onClick = { onModelChange(1) }, enabled = selectedModel != 1) { Text("Standard") }
@@ -257,7 +256,7 @@ fun MainScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { }, // เอาชื่อแอปออกตามต้องการ
+                    title = { },
                     navigationIcon = {
                         if (selectedImageUri != null) {
                             IconButton(onClick = {
@@ -372,7 +371,7 @@ fun MainScreen(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                Screen                   Text(
+                    Text(
                         text = "© 2026 icecat",
                         fontSize = 13.sp,
                         color = Color.Gray,
