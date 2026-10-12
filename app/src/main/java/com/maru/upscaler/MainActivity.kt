@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,12 +47,12 @@ class MainActivity : ComponentActivity() {
             try {
                 System.loadLibrary("maru_upscaler")
             } catch (e: UnsatisfiedLinkError) {
-                // ป้องกันแอปเด้งกรณีหาไฟล์ .so ไม่เจอ
+                
             }
         }
     }
 
-    external fun upscaleImageNative(inputPath: String, outputPath: String): Boolean
+    external fun upscaleImageNative(inputPath: String, outputPath: String, modelType: Int): Boolean
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,6 +66,7 @@ class MainActivity : ComponentActivity() {
 
             val systemLang = Locale.getDefault().language
             var currentLang by remember { mutableStateOf(if (systemLang == "th") "th" else "en") }
+            var selectedModel by remember { mutableStateOf(0) } // 0: Anime, 1: Classifier/Standard
 
             MaterialTheme(
                 colorScheme = if (isDarkTheme) darkColorScheme() else lightColorScheme()
@@ -78,8 +80,10 @@ class MainActivity : ComponentActivity() {
                         onThemeChange = { themeMode = it },
                         currentLang = currentLang,
                         onLangChange = { currentLang = it },
-                        onUpscale = { inputUri, onProgress ->
-                            runAiUpscale(inputUri, onProgress)
+                        selectedModel = selectedModel,
+                        onModelChange = { selectedModel = it },
+                        onUpscale = { inputUri, model, onProgress ->
+                            runAiUpscale(inputUri, model, onProgress)
                         },
                         onSaveToGallery = { file ->
                             saveImageToGallery(file)
@@ -90,7 +94,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun runAiUpscale(inputUri: Uri, onProgress: (Int, String) -> Unit): File? {
+    private fun runAiUpscale(inputUri: Uri, modelType: Int, onProgress: (Int, String) -> Unit): File? {
         try {
             val context = applicationContext
             val inputStream = context.contentResolver.openInputStream(inputUri) ?: return null
@@ -104,10 +108,10 @@ class MainActivity : ComponentActivity() {
             val tempOutputFile = File(context.cacheDir, "output_upscaled.jpg")
             val startTime = System.currentTimeMillis()
             
-            onProgress(30, if (Locale.getDefault().language == "th") "กำลังประมวลผลภาพ..." else "Processing image...")
+            onProgress(30, if (Locale.getDefault().language == "th") "กำลังประมวลผลด้วย AI..." else "Processing with AI...")
 
             val success = try {
-                upscaleImageNative(tempInputFile.absolutePath, tempOutputFile.absolutePath)
+                upscaleImageNative(tempInputFile.absolutePath, tempOutputFile.absolutePath, modelType)
             } catch (e: Exception) {
                 false
             }
@@ -161,7 +165,9 @@ fun MainScreen(
     onThemeChange: (Int) -> Unit,
     currentLang: String,
     onLangChange: (String) -> Unit,
-    onUpscale: suspend (Uri, (Int, String) -> Unit) -> File?,
+    selectedModel: Int,
+    onModelChange: (Int) -> Unit,
+    onUpscale: suspend (Uri, Int, (Int, String) -> Unit) -> File?,
     onSaveToGallery: (File) -> Boolean
 ) {
     var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
@@ -187,7 +193,7 @@ fun MainScreen(
 
             coroutineScope.launch(Dispatchers.Main) {
                 val outputFile = withContext(Dispatchers.IO) {
-                    onUpscale(it) { prog, text ->
+                    onUpscale(it, selectedModel) { prog, text ->
                         progress = prog
                         statusText = text
                     }
@@ -202,172 +208,176 @@ fun MainScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(text = "Maru Upscaler", fontSize = 18.sp) },
-                navigationIcon = {
-                    if (selectedImageUri != null) {
-                        IconButton(onClick = {
-                            selectedImageUri = null
-                            resultImageFile = null
-                            isProcessing = false
-                        }) {
-                            Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
-                        }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu")
-                    }
-                }
-            )
-        }
-    ) { paddingValues ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp)
+    if (showSettings) {
+        
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = MaterialTheme.colorScheme.background
         ) {
             Column(
-                modifier = Modifier.fillMaxSize(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.SpaceBetween
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    if (selectedImageUri == null) {
-                        Text(
-                            text = if (currentLang == "th") "ยังไม่ได้เลือกรูปภาพ" else "No image selected",
-                            color = Color.Gray,
-                            fontSize = 14.sp
-                        )
-                    } else if (isProcessing) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator()
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Text(text = "${if (currentLang == "th") "กำลังประมวลผล" else "Processing"}: $progress%")
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(text = statusText, fontSize = 12.sp, color = Color.Gray)
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .pointerInput(Unit) {
-                                    detectHorizontalDragGestures { change, _ ->
-                                        val width = size.width.toFloat()
-                                        if (width > 0f) {
-                                            sliderPosition = (sliderPosition + (change.position.x / width) - 0.5f).coerceIn(0f, 1f)
-                                        }
-                                    }
-                                }
-                        ) {
-                            if (resultImageFile != null) {
-                                Image(
-                                    painter = rememberAsyncImagePainter(resultImageFile),
-                                    contentDescription = "After",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Fit
-                                )
-                            }
-                        }
+                    IconButton(onClick = { showSettings = false }) {
+                        Icon(imageVector = Icons.Default.Close, contentDescription = "Close Settings")
                     }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = if (currentLang == "th") "Settings" else "Settings", fontSize = 22.sp)
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Divider()
 
-                if (resultImageFile != null && !isProcessing) {
-                    Button(
-                        onClick = {
-                            resultImageFile?.let { file ->
-                                val success = onSaveToGallery(file)
-                                val msg = if (success) {
-                                    if (currentLang == "th") "บันทึกรูปภาพเรียบร้อย!" else "Image saved successfully!"
-                                } else {
-                                    if (currentLang == "th") "บันทึกไม่สำเร็จ" else "Failed to save"
-                                }
-                                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .width(180.dp)
-                            .height(45.dp)
-                    ) {
-                        Text(text = if (currentLang == "th") "บันทึกภาพ" else "Save Image")
-                    }
-                } else {
-                    Button(
-                        onClick = { launcher.launch("image/*") },
-                        enabled = !isProcessing,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier
-                            .width(180.dp)
-                            .height(45.dp)
-                    ) {
-                        Text(text = if (currentLang == "th") "เลือกรูปภาพ" else "Select Image")
-                    }
+                Text(text = if (currentLang == "th") "App Theme" else "App Theme", fontSize = 16.sp, color = Color.Gray)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onThemeChange(0) }, enabled = themeMode != 0) { Text("System") }
+                    Button(onClick = { onThemeChange(1) }, enabled = themeMode != 1) { Text("Light") }
+                    Button(onClick = { onThemeChange(2) }, enabled = themeMode != 2) { Text("Dark") }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Text(text = if (currentLang == "th") "Language" else "Language", fontSize = 16.sp, color = Color.Gray)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onLangChange("th") }, enabled = currentLang != "th") { Text("ไทย") }
+                    Button(onClick = { onLangChange("en") }, enabled = currentLang != "en") { Text("English") }
+                }
 
-                Text(
-                    text = "© 2026 icecat",
-                    fontSize = 11.sp,
-                    color = Color.Gray,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                Text(text = if (currentLang == "th") "AI Model" else "AI Model", fontSize = 16.sp, color = Color.Gray)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { onModelChange(0) }, enabled = selectedModel != 0) { Text("Anime") }
+                    Button(onClick = { onModelChange(1) }, enabled = selectedModel != 1) { Text("Standard") }
+                }
+            }
+        }
+    } else {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { }, // เอาชื่อแอปออกตามต้องการ
+                    navigationIcon = {
+                        if (selectedImageUri != null) {
+                            IconButton(onClick = {
+                                selectedImageUri = null
+                                resultImageFile = null
+                                isProcessing = false
+                            }) {
+                                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back")
+                            }
+                        }
+                    },
+                    actions = {
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(imageVector = Icons.Default.Menu, contentDescription = "Menu")
+                        }
+                    }
                 )
             }
-
-            if (showSettings) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.5f))
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
+        ) { paddingValues ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(paddingValues)
+                    .padding(16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Card(
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.fillMaxWidth()
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Text(text = if (currentLang == "th") "ตั้งค่า" else "Settings", fontSize = 18.sp)
-
-                            Text(text = if (currentLang == "th") "ธีมแอป:" else "App Theme:")
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onThemeChange(0) }, enabled = themeMode != 0) { Text("ระบบ") }
-                                Button(onClick = { onThemeChange(1) }, enabled = themeMode != 1) { Text("สว่าง") }
-                                Button(onClick = { onThemeChange(2) }, enabled = themeMode != 2) { Text("มืด") }
+                        if (selectedImageUri == null) {
+                            Text(
+                                text = if (currentLang == "th") "ยังไม่ได้เลือกรูปภาพ" else "No image selected",
+                                color = Color.Gray,
+                                fontSize = 14.sp
+                            )
+                        } else if (isProcessing) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                CircularProgressIndicator()
+                                Spacer(modifier = Modifier.height(12.dp))
+                                Text(text = "${if (currentLang == "th") "กำลังประมวลผล" else "Processing"}: $progress%")
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(text = statusText, fontSize = 12.sp, color = Color.Gray)
                             }
-
-                            Text(text = if (currentLang == "th") "ภาษา:" else "Language:")
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(onClick = { onLangChange("th") }, enabled = currentLang != "th") { Text("ไทย") }
-                                Button(onClick = { onLangChange("en") }, enabled = currentLang != "en") { Text("English") }
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Button(
-                                onClick = { showSettings = false },
-                                modifier = Modifier.align(Alignment.End)
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(Unit) {
+                                        detectHorizontalDragGestures { change, _ ->
+                                            val width = size.width.toFloat()
+                                            if (width > 0f) {
+                                                sliderPosition = (sliderPosition + (change.position.x / width) - 0.5f).coerceIn(0f, 1f)
+                                            }
+                                        }
+                                    }
                             ) {
-                                Text(text = if (currentLang == "th") "ปิด" else "Close")
+                                if (resultImageFile != null) {
+                                    Image(
+                                        painter = rememberAsyncImagePainter(resultImageFile),
+                                        contentDescription = "After",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                }
                             }
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    if (resultImageFile != null && !isProcessing) {
+                        Button(
+                            onClick = {
+                                resultImageFile?.let { file ->
+                                    val success = onSaveToGallery(file)
+                                    val msg = if (success) {
+                                        if (currentLang == "th") "บันทึกรูปภาพเรียบร้อย!" else "Image saved successfully!"
+                                    } else {
+                                        if (currentLang == "th") "บันทึกไม่สำเร็จ" else "Failed to save"
+                                    }
+                                    Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .width(180.dp)
+                                .height(45.dp)
+                        ) {
+                            Text(text = if (currentLang == "th") "บันทึกภาพ" else "Save Image")
+                        }
+                    } else {
+                        Button(
+                            onClick = { launcher.launch("image/*") },
+                            enabled = !isProcessing,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .width(180.dp)
+                                .height(45.dp)
+                        ) {
+                            Text(text = if (currentLang == "th") "เลือกรูปภาพ" else "Select Image")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                Screen                   Text(
+                        text = "© 2026 icecat",
+                        fontSize = 13.sp,
+                        color = Color.Gray,
+                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                    )
                 }
             }
         }
