@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน'
+        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0)'
         required: true
         default: 'v1.0'
 
@@ -27,10 +27,11 @@ jobs:
 
     - name: Setup Gradle
       uses: gradle/actions/setup-gradle@v3
+      with:
+        gradle-version: '8.1.0'
       
-    
     - name: Generate Gradle Wrapper
-      run: gradle wrapper --gradle-version 8.1.0
+      run: gradle wrapper --gradle-version 8.1.0 --distribution-type bin
 
     - name: Build Release APK
       run: ./gradlew assembleRelease
