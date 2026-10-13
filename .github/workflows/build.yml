@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน'
+        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0-debug)'
         required: true
-        default: 'v1.0'
+        default: 'v1.0-debug'
 
 jobs:
   build-and-release:
@@ -36,15 +36,15 @@ jobs:
         echo "android.enableJetifier=true" >> gradle.properties
         echo "android.suppressUnsupportedCompileSdk=34" >> gradle.properties
 
-    - name: Download NCNN prebuilt (Android)
+    - name: Download NCNN prebuilt (Android + Vulkan)
       env:
         GH_TOKEN: ${{ github.token }}
         NCNN_TAG: ''
       run: |
         set -e
         mkdir -p /tmp/ncnn_dl /tmp/ncnn_x
-        gh release download ${NCNN_TAG:+$NCNN_TAG} --repo Tencent/ncnn --pattern 'ncnn-*-android.zip' --dir /tmp/ncnn_dl
-        unzip -q /tmp/ncnn_dl/ncnn-*-android.zip -d /tmp/ncnn_x
+        gh release download ${NCNN_TAG:+$NCNN_TAG} --repo Tencent/ncnn --pattern 'ncnn-*-android-vulkan.zip' --dir /tmp/ncnn_dl
+        unzip -q /tmp/ncnn_dl/ncnn-*-android-vulkan.zip -d /tmp/ncnn_x
         SRC="$(find /tmp/ncnn_x -mindepth 1 -maxdepth 1 -type d | head -n 1)"
         mkdir -p app/src/main/cpp
         rm -rf app/src/main/cpp/ncnn
