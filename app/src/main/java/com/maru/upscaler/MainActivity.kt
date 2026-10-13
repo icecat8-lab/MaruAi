@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
     external fun classifyBitmapNative(input: Bitmap): Float
     external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, cb: MaruProgress?): Int
     external fun cancelNative()
+    external fun engineBackendNative(): Int
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -237,10 +238,17 @@ class MainActivity : ComponentActivity() {
 
         val seconds = (SystemClock.elapsedRealtime() - started) / 1000.0
         onProgress(100, String.format(Locale.US, tr("เสร็จสิ้นใน %.1f วินาที", "Done in %.1f s"), seconds))
-        PipelineResult.Success(ResultData(out, input, previewAfter, label, seconds))
+
+        val backendText = when (engineBackendNative()) {
+            2 -> "GPU (Vulkan)"
+            1 -> "CPU"
+            else -> ""
+        }
+        val finalLabel = if (backendText.isEmpty()) label else "$label • $backendText"
+        PipelineResult.Success(ResultData(out, input, previewAfter, finalLabel, seconds))
     }
 
-    
+    /** อ่านภาพ: ลดขนาด, หมุนตาม EXIF, ทำให้เป็น ARGB_8888 ทึบแสง */
     private fun decodeInput(uri: Uri): Bitmap? {
         return try {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -297,7 +305,7 @@ class MainActivity : ComponentActivity() {
                 bmp = bmp.copy(Bitmap.Config.ARGB_8888, false) ?: return null
             }
             if (bmp.hasAlpha()) {
-                
+                // โมเดลไม่รองรับ alpha: วางบนพื้นขาวก่อน
                 val flat = Bitmap.createBitmap(bmp.width, bmp.height, Bitmap.Config.ARGB_8888)
                 AndroidCanvas(flat).apply {
                     drawColor(AndroidColor.WHITE)
@@ -636,7 +644,7 @@ fun MainScreen(
     }
 }
 
-
+/** เปรียบเทียบก่อน/หลัง: ลากหรือแตะเพื่อเลื่อนเส้นแบ่ง (ซ้าย = ก่อน, ขวา = หลัง) */
 @Composable
 private fun CompareView(
     before: ImageBitmap,
@@ -708,4 +716,6 @@ private fun CompareView(
                 .padding(horizontal = 8.dp, vertical = 3.dp)
         ) {
             Text(afterLabel, color = Color.White, fontSize = 11.sp)
-  เปรียบเทียบก่อน
+        }
+    }
+}
