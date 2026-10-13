@@ -1,3 +1,18 @@
+// maru_engine.cpp — Maru Upscaler native engine (NCNN + Vulkan GPU, fallback CPU)
+//
+// ฝั่ง Kotlin (class MainActivity):
+//   external fun initEngineNative(assetManager: AssetManager): Int
+//       bit0 (1) = classifier พร้อม, bit1 (2) = โมเดลอัปสเกลพร้อม, bit2 (4) = ใช้ GPU อยู่
+//   external fun classifyBitmapNative(input: Bitmap): Float
+//       0..1 = โอกาสเป็นอนิเมะ, -1 = ล้มเหลว
+//   external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, cb: MaruProgress?): Int
+//       0 สำเร็จ, 1 โมเดลไม่พร้อม, 2 bitmap ไม่ถูกต้อง, 3 ถูกยกเลิก, 4 อนุมานล้มเหลว
+//   external fun cancelNative()
+//   external fun engineBackendNative(): Int      // 0 ไม่พร้อม, 1 CPU, 2 GPU (Vulkan)
+//
+// bitmap ต้องเป็น ARGB_8888 และ output ต้องกว้าง/สูง = input x 4 พอดี
+// ชื่อ blob อินพุต/เอาต์พุตอ่านจากไฟล์ .param อัตโนมัติ (ตัวแรกของแต่ละฝั่ง)
+
 #include <jni.h>
 #include <android/asset_manager_jni.h>
 #include <android/bitmap.h>
@@ -8,8 +23,10 @@
 #include <cmath>
 #include <cstdint>
 #include <mutex>
+#include <string>
 
 #include "cpu.h"
+#include "gpu.h"
 #include "net.h"
 
 #define LOG_TAG "MaruEngine"
@@ -22,36 +39,47 @@ constexpr const char* kClsParam = "Maru_classifier_opt.param";
 constexpr const char* kClsBin = "Maru_classifier_opt.bin";
 constexpr const char* kAnimeParam = "Maru_anime-x4_opt.param";
 constexpr const char* kAnimeBin = "Maru_anime-x4_opt.bin";
-constexpr const char* kInBlob = "in0";
-constexpr const char* kOutBlob = "out0";
 
 constexpr int kScale = 4;
-constexpr int kTileSize = 128;
+constexpr int kTileGpu = 160;
+constexpr int kTileCpu = 128;
 constexpr int kTilePad = 10;
 
-
+// สมมติฐานของ classifier — ตรวจให้ตรงกับตอนเทรน
+constexpr int kClsInputSize = 224;
 constexpr int kClsAnimeIndex = 0;
 
 enum Result { kOk = 0, kNotReady = 1, kBadBitmap = 2, kCancelled = 3, kInferFail = 4 };
 
 ncnn::Net g_cls;
 ncnn::Net g_anime;
+std::string g_clsIn, g_clsOut, g_animeIn, g_animeOut;
 int g_flags = 0;
+std::atomic<int> g_backend{0};
+bool g_gpuInstance = false;
+jobject g_assetRef = nullptr;
+AAssetManager* g_mgr = nullptr;
 std::mutex g_mutex;
 std::atomic<bool> g_cancel{false};
 
-void configure(ncnn::Net& net) {
-    net.opt.use_vulkan_compute = false;
+void configure(ncnn::Net& net, bool useGpu) {
     net.opt.lightmode = true;
     int big = ncnn::get_big_cpu_count();
     net.opt.num_threads = big > 0 ? std::min(big, 4) : 4;
+#if NCNN_VULKAN
+    net.opt.use_vulkan_compute = useGpu;
+    if (useGpu) net.set_vulkan_device(0);
+#else
+    (void)useGpu;
+#endif
 }
 
-bool loadNet(ncnn::Net& net, AAssetManager* mgr, const char* param, const char* bin) {
+bool loadNet(ncnn::Net& net, AAssetManager* mgr, const char* param, const char* bin, bool useGpu,
+             std::string& inName, std::string& outName) {
     net.clear();
-    configure(net);
+    configure(net, useGpu);
     if (net.load_param(mgr, param) != 0) {
-        LOGE("load_param ล้มเหลว: %s (ถ้าไฟล์ขึ้นต้นด้วย pnnx.* แปลว่ายังไม่ใช่ฟอร์แมต ncnn)", param);
+        LOGE("load_param ล้มเหลว: %s (ถ้าขึ้นต้นด้วย pnnx.* แปลว่ายังไม่ใช่ฟอร์แมต ncnn)", param);
         net.clear();
         return false;
     }
@@ -60,6 +88,27 @@ bool loadNet(ncnn::Net& net, AAssetManager* mgr, const char* param, const char* 
         net.clear();
         return false;
     }
+    const auto& ins = net.input_names();
+    const auto& outs = net.output_names();
+    if (ins.empty() || outs.empty()) {
+        LOGE("ไม่พบ blob อินพุต/เอาต์พุตใน %s", param);
+        net.clear();
+        return false;
+    }
+    inName = ins[0];
+    outName = outs[0];
+    LOGI("โหลด %s ok (%s) in=%s out=%s", param, useGpu ? "GPU" : "CPU", inName.c_str(), outName.c_str());
+    return true;
+}
+
+bool reloadAnimeOnCpu() {
+    if (!g_mgr) return false;
+    if (!loadNet(g_anime, g_mgr, kAnimeParam, kAnimeBin, false, g_animeIn, g_animeOut)) {
+        g_flags &= ~2;
+        g_backend = 0;
+        return false;
+    }
+    g_backend = 1;
     return true;
 }
 
@@ -91,29 +140,62 @@ inline uint8_t toByte(float v) {
     return static_cast<uint8_t>(x);
 }
 
-}  
+int inferTile(const ncnn::Mat& tile, ncnn::Mat& res) {
+    ncnn::Extractor ex = g_anime.create_extractor();
+    int r = ex.input(g_animeIn.c_str(), tile);
+    if (r != 0) return r;
+    return ex.extract(g_animeOut.c_str(), res);
+}
+
+}  // namespace
 
 extern "C" {
 
 JNIEXPORT jint JNICALL
 Java_com_maru_upscaler_MainActivity_initEngineNative(JNIEnv* env, jobject /*thiz*/, jobject assetManager) {
     std::lock_guard<std::mutex> lock(g_mutex);
-    if (g_flags == 3) return g_flags;
+    if (g_flags & 2) return g_flags | (g_backend.load() == 2 ? 4 : 0);
 
-    AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
-    if (!mgr) {
+    if (g_assetRef) {
+        env->DeleteGlobalRef(g_assetRef);
+        g_assetRef = nullptr;
+        g_mgr = nullptr;
+    }
+    g_assetRef = env->NewGlobalRef(assetManager);
+    g_mgr = AAssetManager_fromJava(env, g_assetRef);
+    if (!g_mgr) {
         LOGE("AAssetManager_fromJava คืนค่า null");
         return 0;
     }
 
     ncnn::set_cpu_powersave(2);
 
+    bool gpuOk = false;
+#if NCNN_VULKAN
+    if (!g_gpuInstance && ncnn::create_gpu_instance() == 0) g_gpuInstance = true;
+    gpuOk = g_gpuInstance && ncnn::get_gpu_count() > 0;
+#endif
+
     int flags = 0;
-    if (loadNet(g_cls, mgr, kClsParam, kClsBin)) flags |= 1;
-    if (loadNet(g_anime, mgr, kAnimeParam, kAnimeBin)) flags |= 2;
+    if (loadNet(g_cls, g_mgr, kClsParam, kClsBin, false, g_clsIn, g_clsOut)) flags |= 1;
+
+    int backend = 0;
+    if (gpuOk && loadNet(g_anime, g_mgr, kAnimeParam, kAnimeBin, true, g_animeIn, g_animeOut)) {
+        backend = 2;
+    } else if (loadNet(g_anime, g_mgr, kAnimeParam, kAnimeBin, false, g_animeIn, g_animeOut)) {
+        backend = 1;
+    }
+    if (backend != 0) flags |= 2;
+
     g_flags = flags;
-    LOGI("initEngine flags=%d", flags);
-    return flags;
+    g_backend = backend;
+    LOGI("initEngine flags=%d backend=%d", flags, backend);
+    return flags | (backend == 2 ? 4 : 0);
+}
+
+JNIEXPORT jint JNICALL
+Java_com_maru_upscaler_MainActivity_engineBackendNative(JNIEnv* /*env*/, jobject /*thiz*/) {
+    return g_backend.load();
 }
 
 JNIEXPORT jfloat JNICALL
@@ -135,9 +217,9 @@ Java_com_maru_upscaler_MainActivity_classifyBitmapNative(JNIEnv* env, jobject /*
     m.substract_mean_normalize(mean, norm);
 
     ncnn::Extractor ex = g_cls.create_extractor();
-    if (ex.input(kInBlob, m) != 0) return -1.f;
+    if (ex.input(g_clsIn.c_str(), m) != 0) return -1.f;
     ncnn::Mat out;
-    if (ex.extract(kOutBlob, out) != 0 || out.w < 2) return -1.f;
+    if (ex.extract(g_clsOut.c_str(), out) != 0 || out.w < 2) return -1.f;
 
     const float* p = out;
     float mx = std::max(p[0], p[1]);
@@ -185,8 +267,9 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
     auto* outPix = static_cast<uint8_t*>(out.pixels);
     const int outStride = static_cast<int>(out.info.stride);
 
-    const int tilesX = (w + kTileSize - 1) / kTileSize;
-    const int tilesY = (h + kTileSize - 1) / kTileSize;
+    const int tileSize = (g_backend.load() == 2) ? kTileGpu : kTileCpu;
+    const int tilesX = (w + tileSize - 1) / tileSize;
+    const int tilesY = (h + tileSize - 1) / tileSize;
     const int total = tilesX * tilesY;
     int done = 0;
     int lastPercent = -1;
@@ -197,8 +280,8 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
         for (int tx = 0; tx < tilesX; ++tx) {
             if (g_cancel.load()) return kCancelled;
 
-            const int x0 = tx * kTileSize, y0 = ty * kTileSize;
-            const int x1 = std::min(x0 + kTileSize, w), y1 = std::min(y0 + kTileSize, h);
+            const int x0 = tx * tileSize, y0 = ty * tileSize;
+            const int x1 = std::min(x0 + tileSize, w), y1 = std::min(y0 + tileSize, h);
             const int px0 = std::max(x0 - kTilePad, 0), py0 = std::max(y0 - kTilePad, 0);
             const int px1 = std::min(x1 + kTilePad, w), py1 = std::min(y1 + kTilePad, h);
 
@@ -209,12 +292,16 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
             tile.substract_mean_normalize(nullptr, norm255);
 
             ncnn::Mat res;
-            {
-                ncnn::Extractor ex = g_anime.create_extractor();
-                if (ex.input(kInBlob, tile) != 0 || ex.extract(kOutBlob, res) != 0) {
-                    LOGE("อนุมานล้มเหลวที่ tile (%d,%d)", tx, ty);
-                    return kInferFail;
-                }
+            int r = inferTile(tile, res);
+            if (r != 0 && g_backend.load() == 2) {
+                LOGE("GPU ล้มเหลว (code %d) ที่ tile (%d,%d) -> สลับไปใช้ CPU", r, tx, ty);
+                if (!reloadAnimeOnCpu()) return kInferFail;
+                res = ncnn::Mat();
+                r = inferTile(tile, res);
+            }
+            if (r != 0) {
+                LOGE("อนุมานล้มเหลวที่ tile (%d,%d) code=%d", tx, ty, r);
+                return kInferFail;
             }
             if (res.c < 3 || res.w != (px1 - px0) * kScale || res.h != (py1 - py0) * kScale) {
                 LOGE("ขนาดผลลัพธ์ไม่ตรง: %dx%dx%d", res.w, res.h, res.c);
@@ -227,14 +314,14 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
 
             const ncnn::Mat rc = res.channel(0), gc = res.channel(1), bc = res.channel(2);
             for (int yy = 0; yy < ch; ++yy) {
-                const float* r = rc.row(oy0 + yy) + ox0;
-                const float* g = gc.row(oy0 + yy) + ox0;
-                const float* b = bc.row(oy0 + yy) + ox0;
+                const float* rr = rc.row(oy0 + yy) + ox0;
+                const float* gg = gc.row(oy0 + yy) + ox0;
+                const float* bb = bc.row(oy0 + yy) + ox0;
                 uint8_t* d = outPix + static_cast<size_t>(dstY + yy) * outStride + static_cast<size_t>(dstX) * 4;
                 for (int xx = 0; xx < cw; ++xx) {
-                    d[0] = toByte(r[xx]);
-                    d[1] = toByte(g[xx]);
-                    d[2] = toByte(b[xx]);
+                    d[0] = toByte(rr[xx]);
+                    d[1] = toByte(gg[xx]);
+                    d[2] = toByte(bb[xx]);
                     d[3] = 255;
                     d += 4;
                 }
@@ -254,4 +341,4 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
     return kOk;
 }
 
-}  
+}  // extern "C"
