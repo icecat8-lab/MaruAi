@@ -104,6 +104,10 @@ class MainActivity : ComponentActivity() {
         private const val MAX_INPUT_EDGE = 1024   // ด้านยาวสุดของภาพเข้า (ผลลัพธ์ = x4)
         private const val PREVIEW_EDGE = 2048     // ขนาดภาพพรีวิวบนจอ
 
+        // รหัสโมเดล (ต้องตรงกับ kModelAnime / kModelPhoto ใน maru_engine.cpp)
+        private const val MODEL_ANIME = 0
+        private const val MODEL_PHOTO = 1
+
         @Volatile
         private var nativeLoaded = false
 
@@ -119,7 +123,8 @@ class MainActivity : ComponentActivity() {
 
     external fun initEngineNative(assetManager: AssetManager): Int
     external fun classifyBitmapNative(input: Bitmap): Float
-    external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, cb: MaruProgress?): Int
+    external fun hasModelNative(modelId: Int): Boolean
+    external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, modelId: Int, cb: MaruProgress?): Int
     external fun cancelNative()
     external fun engineBackendNative(): Int
 
@@ -181,9 +186,37 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        onProgress(2, tr("กำลังโหลดโมเดล...", "Loading models..."))
-        val flags = initEngineNative(assets)
-        if ((flags and 2) == 0) {
+        onProgress(2, tr("กำลังเริ่มระบบ AI...", "Starting AI engine..."))
+        val initCode = initEngineNative(assets)
+        if (initCode == -2) {
+            return@withContext PipelineResult.Error(
+                tr(
+                    "เครื่องนี้ไม่รองรับ Vulkan GPU ซึ่งแอปต้องใช้ในการอัปสเกล",
+                    "This device has no Vulkan GPU, which the app requires for upscaling"
+                )
+            )
+        }
+        if (initCode < 0) {
+            return@withContext PipelineResult.Error(
+                tr("เริ่มระบบ AI ไม่สำเร็จ", "Failed to start the AI engine")
+            )
+        }
+
+        onProgress(5, tr("กำลังอ่านภาพ...", "Reading image..."))
+        val input = decodeInput(uri)
+            ?: return@withContext PipelineResult.Error(tr("อ่านภาพไม่สำเร็จ", "Cannot read the image"))
+
+        // ---- เลือกโมเดลอัตโนมัติจากผล classifier ----
+        onProgress(8, tr("กำลังวิเคราะห์ประเภทภาพ...", "Analyzing image type..."))
+        val prob = classifyBitmapNative(input)   // โอกาสเป็นอนิเมะ, -1 = ไม่มี classifier
+
+        var modelId = if (prob >= 0f && prob < 0.5f) MODEL_PHOTO else MODEL_ANIME
+        var photoModelMissing = false
+        if (modelId == MODEL_PHOTO && !hasModelNative(MODEL_PHOTO)) {
+            modelId = MODEL_ANIME
+            photoModelMissing = true
+        }
+        if (!hasModelNative(modelId)) {
             return@withContext PipelineResult.Error(
                 tr(
                     "โหลดโมเดลอัปสเกลไม่สำเร็จ — ตรวจว่าไฟล์โมเดลใน assets เป็นฟอร์แมต NCNN",
@@ -192,18 +225,14 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        onProgress(5, tr("กำลังอ่านภาพ...", "Reading image..."))
-        val input = decodeInput(uri)
-            ?: return@withContext PipelineResult.Error(tr("อ่านภาพไม่สำเร็จ", "Cannot read the image"))
-
-        val prob = classifyBitmapNative(input)
         val label = when {
-            prob < 0f -> tr("ไม่ทราบประเภทภาพ", "Unknown image type")
-            prob >= 0.5f -> tr("ตรวจพบ: อนิเมะ", "Detected: anime")
-            else -> tr(
-                "ตรวจพบ: ภาพถ่าย (ใช้โมเดลอนิเมะ ผลอาจไม่เหมาะ)",
-                "Detected: photo (using the anime model, results may vary)"
+            photoModelMissing -> tr(
+                "ตรวจพบ: ภาพถ่าย (ยังไม่มีโมเดล Photo → ใช้โมเดล Anime)",
+                "Detected: photo (no Photo model yet → using Anime model)"
             )
+            prob < 0f -> tr("ไม่ทราบประเภทภาพ → โมเดล Anime", "Unknown type → Anime model")
+            modelId == MODEL_PHOTO -> tr("ตรวจพบ: ภาพถ่าย → โมเดล Photo", "Detected: photo → Photo model")
+            else -> tr("ตรวจพบ: อนิเมะ → โมเดล Anime", "Detected: anime → Anime model")
         }
         onProgress(10, label)
 
@@ -213,8 +242,8 @@ class MainActivity : ComponentActivity() {
             return@withContext PipelineResult.Error(tr("หน่วยความจำไม่พอ", "Out of memory"))
         }
 
-        val upscalingText = tr("กำลังอัปสเกล...", "Upscaling...")
-        val code = upscaleBitmapNative(input, out, MaruProgress { p ->
+        val upscalingText = tr("กำลังอัปสเกลบน GPU...", "Upscaling on GPU...")
+        val code = upscaleBitmapNative(input, out, modelId, MaruProgress { p ->
             onProgress(10 + p * 85 / 100, upscalingText)
         })
         when (code) {
@@ -222,7 +251,15 @@ class MainActivity : ComponentActivity() {
             3 -> return@withContext PipelineResult.Cancelled
             1 -> return@withContext PipelineResult.Error(tr("โมเดลยังไม่พร้อม", "Model is not ready"))
             2 -> return@withContext PipelineResult.Error(tr("ภาพไม่ถูกต้อง", "Invalid bitmap"))
-            else -> return@withContext PipelineResult.Error(tr("การอัปสเกลล้มเหลว", "Upscaling failed"))
+            5 -> return@withContext PipelineResult.Error(
+                tr(
+                    "ขนาดผลลัพธ์ของโมเดลไม่ใช่ x4 — ตรวจโมเดลที่ export",
+                    "The model output is not x4 — check the exported model"
+                )
+            )
+            else -> return@withContext PipelineResult.Error(
+                tr("GPU อัปสเกลล้มเหลว", "GPU upscaling failed")
+            )
         }
 
         val longOut = max(out.width, out.height)
@@ -239,11 +276,7 @@ class MainActivity : ComponentActivity() {
         val seconds = (SystemClock.elapsedRealtime() - started) / 1000.0
         onProgress(100, String.format(Locale.US, tr("เสร็จสิ้นใน %.1f วินาที", "Done in %.1f s"), seconds))
 
-        val backendText = when (engineBackendNative()) {
-            2 -> "GPU (Vulkan)"
-            1 -> "CPU"
-            else -> ""
-        }
+        val backendText = if (engineBackendNative() == 2) "GPU (Vulkan)" else ""
         val finalLabel = if (backendText.isEmpty()) label else "$label • $backendText"
         PipelineResult.Success(ResultData(out, input, previewAfter, finalLabel, seconds))
     }
