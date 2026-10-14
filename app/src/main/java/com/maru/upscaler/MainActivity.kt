@@ -21,19 +21,62 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ExperimentalAnimationApi
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateIntAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -46,13 +89,19 @@ import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
+import com.maru.upscaler.ui.IosButton
+import com.maru.upscaler.ui.IosEasing
+import com.maru.upscaler.ui.IosIconButton
 import com.maru.upscaler.ui.MaruSettingsScreen
+import com.maru.upscaler.ui.iosSpring
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
@@ -67,7 +116,6 @@ class ResultData(
     val full: Bitmap,
     val before: Bitmap,
     val previewAfter: Bitmap,
-    val label: String,
     val seconds: Double
 )
 
@@ -77,10 +125,15 @@ sealed class PipelineResult {
     object Cancelled : PipelineResult()
 }
 
+private enum class Phase { Idle, Processing, Result, Error }
+
+private val MaruShapes = Shapes(extraSmall = RoundedCornerShape(14.dp))
+
 private val MaruDark = darkColorScheme(
     background = Color.Black,
     surface = Color(0xFF1C1C1E),
     surfaceVariant = Color(0xFF2C2C2E),
+    surfaceTint = Color.Transparent,
     onBackground = Color.White,
     onSurface = Color.White,
     onSurfaceVariant = Color(0xFF8E8E93),
@@ -91,6 +144,7 @@ private val MaruLight = lightColorScheme(
     background = Color(0xFFF2F2F7),
     surface = Color.White,
     surfaceVariant = Color(0xFFE5E5EA),
+    surfaceTint = Color.Transparent,
     onBackground = Color.Black,
     onSurface = Color.Black,
     onSurfaceVariant = Color(0xFF6C6C70),
@@ -104,7 +158,7 @@ class MainActivity : ComponentActivity() {
         private const val MAX_INPUT_EDGE = 1024   // ด้านยาวสุดของภาพเข้า (ผลลัพธ์ = x4)
         private const val PREVIEW_EDGE = 2048     // ขนาดภาพพรีวิวบนจอ
 
-        // รหัสโมเดล (ต้องตรงกับ kModelAnime / kModelPhoto ใน maru_engine.cpp)
+        // รหัสโมเดล (ต้องตรงกับลำดับใน g_models ของ maru_engine.cpp)
         private const val MODEL_ANIME = 0
         private const val MODEL_PHOTO = 1
 
@@ -126,10 +180,11 @@ class MainActivity : ComponentActivity() {
     external fun hasModelNative(modelId: Int): Boolean
     external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, modelId: Int, cb: MaruProgress?): Int
     external fun cancelNative()
-    external fun engineBackendNative(): Int
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        requestMaxRefreshRate()
 
         val prefs = getSharedPreferences("maru_prefs", MODE_PRIVATE)
         val savedTheme = prefs.getInt("theme_mode", 2)
@@ -145,7 +200,10 @@ class MainActivity : ComponentActivity() {
                 else -> isSystemInDarkTheme()
             }
 
-            MaterialTheme(colorScheme = if (darkTheme) MaruDark else MaruLight) {
+            MaterialTheme(
+                colorScheme = if (darkTheme) MaruDark else MaruLight,
+                shapes = MaruShapes
+            ) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
@@ -167,6 +225,27 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+        }
+    }
+
+    /** ขอให้จอทำงานที่รีเฟรชเรตสูงสุดของเครื่อง (ความละเอียดเดิม) อัตโนมัติ */
+    private fun requestMaxRefreshRate() {
+        try {
+            @Suppress("DEPRECATION")
+            val display = windowManager.defaultDisplay
+            val current = display.mode
+            val best = display.supportedModes
+                .filter {
+                    it.physicalWidth == current.physicalWidth &&
+                        it.physicalHeight == current.physicalHeight
+                }
+                .maxByOrNull { it.refreshRate } ?: return
+            val lp = window.attributes
+            lp.preferredDisplayModeId = best.modeId
+            lp.preferredRefreshRate = best.refreshRate
+            window.attributes = lp
+        } catch (e: Exception) {
+            Log.w(TAG, "ตั้งค่า refresh rate สูงสุดไม่สำเร็จ", e)
         }
     }
 
@@ -206,15 +285,14 @@ class MainActivity : ComponentActivity() {
         val input = decodeInput(uri)
             ?: return@withContext PipelineResult.Error(tr("อ่านภาพไม่สำเร็จ", "Cannot read the image"))
 
-        // ---- เลือกโมเดลอัตโนมัติจากผล classifier ----
-        onProgress(8, tr("กำลังวิเคราะห์ประเภทภาพ...", "Analyzing image type..."))
+        // ---- เลือกโมเดลอัตโนมัติจากผล classifier (ทำงานเงียบๆ ไม่แสดงบนจอ) ----
+        onProgress(8, tr("กำลังวิเคราะห์ภาพ...", "Analyzing image..."))
         val prob = classifyBitmapNative(input)   // โอกาสเป็นอนิเมะ, -1 = ไม่มี classifier
 
         var modelId = if (prob >= 0f && prob < 0.5f) MODEL_PHOTO else MODEL_ANIME
-        var photoModelMissing = false
+        // ยังไม่มีโมเดล Photo -> ใช้โมเดล Anime แทน
         if (modelId == MODEL_PHOTO && !hasModelNative(MODEL_PHOTO)) {
             modelId = MODEL_ANIME
-            photoModelMissing = true
         }
         if (!hasModelNative(modelId)) {
             return@withContext PipelineResult.Error(
@@ -225,16 +303,8 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        val label = when {
-            photoModelMissing -> tr(
-                "ตรวจพบ: ภาพถ่าย (ยังไม่มีโมเดล Photo → ใช้โมเดล Anime)",
-                "Detected: photo (no Photo model yet → using Anime model)"
-            )
-            prob < 0f -> tr("ไม่ทราบประเภทภาพ → โมเดล Anime", "Unknown type → Anime model")
-            modelId == MODEL_PHOTO -> tr("ตรวจพบ: ภาพถ่าย → โมเดล Photo", "Detected: photo → Photo model")
-            else -> tr("ตรวจพบ: อนิเมะ → โมเดล Anime", "Detected: anime → Anime model")
-        }
-        onProgress(10, label)
+        val upscalingText = tr("กำลังอัปสเกล...", "Upscaling...")
+        onProgress(10, upscalingText)
 
         val out = try {
             Bitmap.createBitmap(input.width * 4, input.height * 4, Bitmap.Config.ARGB_8888)
@@ -242,7 +312,6 @@ class MainActivity : ComponentActivity() {
             return@withContext PipelineResult.Error(tr("หน่วยความจำไม่พอ", "Out of memory"))
         }
 
-        val upscalingText = tr("กำลังอัปสเกลบน GPU...", "Upscaling on GPU...")
         val code = upscaleBitmapNative(input, out, modelId, MaruProgress { p ->
             onProgress(10 + p * 85 / 100, upscalingText)
         })
@@ -274,11 +343,8 @@ class MainActivity : ComponentActivity() {
         } else out
 
         val seconds = (SystemClock.elapsedRealtime() - started) / 1000.0
-        onProgress(100, String.format(Locale.US, tr("เสร็จสิ้นใน %.1f วินาที", "Done in %.1f s"), seconds))
-
-        val backendText = if (engineBackendNative() == 2) "GPU (Vulkan)" else ""
-        val finalLabel = if (backendText.isEmpty()) label else "$label • $backendText"
-        PipelineResult.Success(ResultData(out, input, previewAfter, finalLabel, seconds))
+        onProgress(100, tr("เสร็จสิ้น", "Done"))
+        PipelineResult.Success(ResultData(out, input, previewAfter, seconds))
     }
 
     /** อ่านภาพ: ลดขนาด, หมุนตาม EXIF, ทำให้เป็น ARGB_8888 ทึบแสง */
@@ -398,7 +464,7 @@ class MainActivity : ComponentActivity() {
 
 // ------------------------------------------------------------------------ UI
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalAnimationApi::class)
 @Composable
 fun MainScreen(
     themeMode: Int,
@@ -419,14 +485,49 @@ fun MainScreen(
     var isSaving by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0) }
     var statusText by remember { mutableStateOf("") }
+    var etaSeconds by remember { mutableStateOf<Int?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var sliderPosition by remember { mutableStateOf(0.5f) }
+    var userTouched by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
     val runCounter = remember { intArrayOf(0) }
+    val etaBase = remember { longArrayOf(0L, 0L) }   // [0] = เวลาเริ่มวัด, [1] = progress ตอนเริ่มวัด
+    val lastData = remember { mutableStateOf<ResultData?>(null) }
 
-    val hasContent = isProcessing || result != null || errorText != null
+    val phase = when {
+        isProcessing -> Phase.Processing
+        result != null -> Phase.Result
+        errorText != null -> Phase.Error
+        else -> Phase.Idle
+    }
+    val hasContent = phase != Phase.Idle
+    val shown = result ?: lastData.value
 
     fun tr(th: String, en: String) = if (lang == "th") th else en
+
+    // เก็บผลลัพธ์ล่าสุดไว้ชั่วคราว ให้แอนิเมชันตอนออกจากหน้าผลลัพธ์ยังมีภาพให้แสดง
+    LaunchedEffect(result) {
+        if (result != null) lastData.value = result
+    }
+    LaunchedEffect(phase) {
+        if (phase != Phase.Result) {
+            delay(500)
+            lastData.value = null
+        }
+    }
+
+    // เปิดหน้าผลลัพธ์: เส้นแบ่งไหลมาที่กลางภาพอย่างนุ่มนวล (หยุดทันทีถ้าผู้ใช้แตะ)
+    LaunchedEffect(result) {
+        if (result != null) {
+            userTouched = false
+            sliderPosition = 1f
+            animate(
+                initialValue = 1f,
+                targetValue = 0.5f,
+                animationSpec = spring(dampingRatio = 1f, stiffness = 70f)
+            ) { v, _ -> if (!userTouched) sliderPosition = v }
+        }
+    }
 
     fun resetAll() {
         if (isProcessing) {
@@ -439,6 +540,7 @@ fun MainScreen(
         errorText = null
         progress = 0
         statusText = ""
+        etaSeconds = null
         sliderPosition = 0.5f
     }
 
@@ -451,6 +553,9 @@ fun MainScreen(
         result = null
         errorText = null
         progress = 0
+        etaSeconds = null
+        etaBase[0] = 0L
+        etaBase[1] = 0L
         sliderPosition = 0.5f
         statusText = tr("กำลังเตรียม...", "Preparing...")
         isProcessing = true
@@ -459,6 +564,19 @@ fun MainScreen(
                 if (runId == runCounter[0]) {
                     progress = p
                     statusText = s
+                    // ประมาณเวลาที่เหลือจากความเร็วของ tile ที่เสร็จแล้ว (ช่วง 10..95%)
+                    if (p in 11..94) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (etaBase[0] == 0L) {
+                            etaBase[0] = now
+                            etaBase[1] = p.toLong()
+                        } else if (p - etaBase[1] >= 4) {
+                            val perUnit = (now - etaBase[0]).toDouble() / (p - etaBase[1])
+                            val raw = (perUnit * (95 - p) / 1000.0 + 0.5).toInt()
+                            val prev = etaSeconds
+                            etaSeconds = if (prev == null) raw else (prev * 2 + raw + 1) / 3
+                        }
+                    }
                 }
             }
             if (runId == runCounter[0]) {
@@ -515,165 +633,357 @@ fun MainScreen(
         if (showSettings) showSettings = false else resetAll()
     }
 
-    if (showSettings) {
-        MaruSettingsScreen(
-            themeMode = themeMode,
-            onThemeChange = onThemeChange,
-            lang = lang,
-            onLangChange = onLangChange,
-            onBack = { showSettings = false }
-        )
-    } else {
-        Scaffold(
-            containerColor = cs.background,
-            topBar = {
-                TopAppBar(
-                    title = { },
-                    navigationIcon = {
-                        if (hasContent) {
-                            IconButton(onClick = { resetAll() }) {
-                                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = cs.onBackground)
-                            }
-                        }
-                    },
-                    actions = {
-                        IconButton(onClick = { showSettings = true }) {
-                            Icon(Icons.Default.Menu, contentDescription = "Menu", tint = cs.onBackground)
-                        }
-                    },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = cs.background)
-                )
+    // เปลี่ยนหน้าหลัก <-> ตั้งค่า แบบ push ของ iOS (หน้าเดิมเลื่อนถอยหลังเล็กน้อย)
+    AnimatedContent(
+        targetState = showSettings,
+        modifier = Modifier.fillMaxSize(),
+        transitionSpec = {
+            if (targetState) {
+                (slideInHorizontally(animationSpec = iosSpring(400f)) { it }) togetherWith
+                    (slideOutHorizontally(animationSpec = iosSpring(400f)) { -it / 4 } +
+                        fadeOut(animationSpec = iosSpring(400f)))
+            } else {
+                ((slideInHorizontally(animationSpec = iosSpring(400f)) { -it / 4 } +
+                    fadeIn(animationSpec = iosSpring(400f))) togetherWith
+                    (slideOutHorizontally(animationSpec = iosSpring(400f)) { it })).apply {
+                    targetContentZIndex = -1f
+                }
             }
-        ) { paddingValues ->
-            Box(
+        },
+        label = "screen"
+    ) { settingsVisible ->
+        if (settingsVisible) {
+            MaruSettingsScreen(
+                themeMode = themeMode,
+                onThemeChange = onThemeChange,
+                lang = lang,
+                onLangChange = onLangChange,
+                onBack = { showSettings = false }
+            )
+        } else {
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(cs.background)
-                    .padding(paddingValues)
-                    .padding(16.dp)
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.SpaceBetween
+                // ---- แถบบน: ซ้าย = กากบาท (ระหว่างประมวลผล) / ย้อนกลับ, ขวา = เมนู ----
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(56.dp)
+                        .padding(horizontal = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Box(
+                    val leftMode = when {
+                        isProcessing -> 1
+                        hasContent -> 2
+                        else -> 0
+                    }
+                    Box(modifier = Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                        AnimatedContent(
+                            targetState = leftMode,
+                            transitionSpec = {
+                                (fadeIn(animationSpec = tween(220)) +
+                                    scaleIn(initialScale = 0.6f, animationSpec = tween(220, easing = IosEasing))) togetherWith
+                                    (fadeOut(animationSpec = tween(120)) +
+                                        scaleOut(targetScale = 0.6f, animationSpec = tween(120)))
+                            },
+                            label = "leftIcon"
+                        ) { mode ->
+                            when (mode) {
+                                1 -> IosIconButton(onClick = { resetAll() }) {
+                                    Icon(Icons.Default.Close, contentDescription = "Cancel", tint = cs.onBackground)
+                                }
+                                2 -> IosIconButton(onClick = { resetAll() }) {
+                                    Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = cs.onBackground)
+                                }
+                                else -> Spacer(modifier = Modifier.size(44.dp))
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    IosIconButton(onClick = { showSettings = true }) {
+                        Icon(Icons.Default.Menu, contentDescription = "Menu", tint = cs.onBackground)
+                    }
+                }
+
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // ---- พื้นที่หลัก: เปลี่ยนสถานะด้วย fade + scale นุ่มๆ ----
+                    AnimatedContent(
+                        targetState = phase,
                         modifier = Modifier
                             .weight(1f)
+                            .fillMaxWidth(),
+                        transitionSpec = {
+                            (fadeIn(animationSpec = tween(350, easing = IosEasing)) +
+                                scaleIn(initialScale = 0.94f, animationSpec = tween(350, easing = IosEasing))) togetherWith
+                                fadeOut(animationSpec = tween(180))
+                        },
+                        label = "phase"
+                    ) { p ->
+                        when (p) {
+                            Phase.Idle -> CardBox {
+                                Text(
+                                    text = tr("ยังไม่ได้เลือกรูปภาพ", "No image selected"),
+                                    color = cs.onSurfaceVariant,
+                                    fontSize = 14.sp
+                                )
+                            }
+
+                            Phase.Processing -> CardBox {
+                                ProcessingView(
+                                    progress = progress,
+                                    etaSeconds = etaSeconds,
+                                    statusText = statusText,
+                                    thai = lang == "th"
+                                )
+                            }
+
+                            Phase.Error -> CardBox {
+                                Text(
+                                    text = errorText ?: "",
+                                    color = cs.error,
+                                    fontSize = 14.sp,
+                                    modifier = Modifier.padding(24.dp)
+                                )
+                            }
+
+                            Phase.Result -> {
+                                val data = shown
+                                if (data != null) {
+                                    ResultView(
+                                        data = data,
+                                        position = { sliderPosition },
+                                        onDrag = {
+                                            userTouched = true
+                                            sliderPosition = it
+                                        },
+                                        onTap = { target ->
+                                            userTouched = true
+                                            scope.launch {
+                                                animate(
+                                                    initialValue = sliderPosition,
+                                                    targetValue = target,
+                                                    animationSpec = spring(dampingRatio = 1f, stiffness = 400f)
+                                                ) { v, _ -> sliderPosition = v }
+                                            }
+                                        },
+                                        beforeLabel = tr("ก่อน", "Before"),
+                                        afterLabel = tr("หลัง", "After"),
+                                        timeText = tr(
+                                            "เสร็จใน ${String.format(Locale.US, "%.1f", data.seconds)} วินาที",
+                                            "Done in ${String.format(Locale.US, "%.1f", data.seconds)} s"
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    // ---- ปุ่มด้านล่าง ----
+                    val buttonMode = when (phase) {
+                        Phase.Result -> 2
+                        Phase.Processing -> 0
+                        else -> 1
+                    }
+                    Box(
+                        modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(16.dp))
-                            .background(cs.surface),
+                            .height(50.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        val data = result
-                        val err = errorText
-                        when {
-                            isProcessing -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                CircularProgressIndicator(color = cs.onSurface)
-                                Spacer(modifier = Modifier.height(12.dp))
-                                Text(
-                                    text = "${tr("กำลังประมวลผล", "Processing")}: $progress%",
-                                    color = cs.onSurface
+                        AnimatedContent(
+                            targetState = buttonMode,
+                            transitionSpec = {
+                                (fadeIn(animationSpec = tween(300)) +
+                                    slideInVertically(animationSpec = iosSpring(400f)) { it / 2 }) togetherWith
+                                    fadeOut(animationSpec = tween(150))
+                            },
+                            label = "buttons"
+                        ) { mode ->
+                            when (mode) {
+                                2 -> Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    IosButton(
+                                        text = tr("บันทึกภาพ", "Save Image"),
+                                        onClick = { requestSave() },
+                                        enabled = !isSaving,
+                                        modifier = Modifier.width(150.dp)
+                                    )
+                                    IosButton(
+                                        text = tr("เลือกรูปอื่น", "Another image"),
+                                        onClick = { picker.launch("image/*") },
+                                        filled = false,
+                                        modifier = Modifier.width(150.dp)
+                                    )
+                                }
+
+                                1 -> IosButton(
+                                    text = tr("เลือกรูปภาพ", "Select Image"),
+                                    onClick = { picker.launch("image/*") },
+                                    modifier = Modifier.width(200.dp)
                                 )
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(text = statusText, fontSize = 12.sp, color = cs.onSurfaceVariant)
+
+                                else -> Spacer(modifier = Modifier.height(50.dp))
                             }
-
-                            data != null -> {
-                                val beforeImg = remember(data.before) { data.before.asImageBitmap() }
-                                val afterImg = remember(data.previewAfter) { data.previewAfter.asImageBitmap() }
-                                CompareView(
-                                    before = beforeImg,
-                                    after = afterImg,
-                                    position = sliderPosition,
-                                    onPosition = { sliderPosition = it },
-                                    beforeLabel = tr("ก่อน", "Before"),
-                                    afterLabel = tr("หลัง", "After")
-                                )
-                            }
-
-                            err != null -> Text(
-                                text = err,
-                                color = cs.error,
-                                fontSize = 14.sp,
-                                modifier = Modifier.padding(24.dp)
-                            )
-
-                            else -> Text(
-                                text = tr("ยังไม่ได้เลือกรูปภาพ", "No image selected"),
-                                color = cs.onSurfaceVariant,
-                                fontSize = 14.sp
-                            )
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    result?.let {
-                        if (!isProcessing) {
-                            Text(
-                                text = "${it.label} • ${String.format(Locale.US, "%.1f", it.seconds)} s",
-                                fontSize = 12.sp,
-                                color = cs.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    val buttonColors = ButtonDefaults.buttonColors(
-                        containerColor = cs.onBackground,
-                        contentColor = cs.background
-                    )
-                    val buttonShape = RoundedCornerShape(8.dp)
-
-                    if (result != null && !isProcessing) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = { requestSave() },
-                                enabled = !isSaving,
-                                shape = buttonShape,
-                                colors = buttonColors,
-                                modifier = Modifier
-                                    .width(150.dp)
-                                    .height(45.dp)
-                            ) {
-                                Text(tr("บันทึกภาพ", "Save Image"))
-                            }
-                            OutlinedButton(
-                                onClick = { picker.launch("image/*") },
-                                shape = buttonShape,
-                                modifier = Modifier
-                                    .width(150.dp)
-                                    .height(45.dp)
-                            ) {
-                                Text(tr("เลือกรูปอื่น", "Another image"), color = cs.onBackground)
-                            }
-                        }
-                    } else {
-                        Button(
-                            onClick = { picker.launch("image/*") },
-                            enabled = !isProcessing,
-                            shape = buttonShape,
-                            colors = buttonColors,
-                            modifier = Modifier
-                                .width(180.dp)
-                                .height(45.dp)
-                        ) {
-                            Text(tr("เลือกรูปภาพ", "Select Image"))
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     Text(
                         text = "© 2026 icecat",
                         fontSize = 13.sp,
                         color = cs.onSurfaceVariant
                     )
+
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CardBox(content: @Composable BoxScope.() -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(20.dp))
+            .background(MaterialTheme.colorScheme.surface),
+        contentAlignment = Alignment.Center,
+        content = content
+    )
+}
+
+private fun formatEta(seconds: Int, thai: Boolean): String {
+    val m = seconds / 60
+    val s = seconds % 60
+    return if (thai) {
+        if (m > 0) "$m นาที $s วินาที" else "$seconds วินาที"
+    } else {
+        if (m > 0) "$m min $s s" else "$seconds s"
+    }
+}
+
+/** หน้าระหว่างประมวลผล: เปอร์เซ็นต์ + แถบความคืบหน้า + เวลาที่เหลือ */
+@Composable
+private fun ProcessingView(
+    progress: Int,
+    etaSeconds: Int?,
+    statusText: String,
+    thai: Boolean
+) {
+    val cs = MaterialTheme.colorScheme
+    val shownPercent by animateIntAsState(
+        targetValue = progress,
+        animationSpec = tween(450, easing = IosEasing),
+        label = "percent"
+    )
+    val fraction by animateFloatAsState(
+        targetValue = (progress / 100f).coerceIn(0f, 1f),
+        animationSpec = tween(450, easing = IosEasing),
+        label = "fraction"
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = if (thai) "กำลังประมวลผล" else "Processing",
+            fontSize = 14.sp,
+            color = cs.onSurfaceVariant
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Text(
+            text = "$shownPercent%",
+            fontSize = 56.sp,
+            fontWeight = FontWeight.Light,
+            color = cs.onSurface
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(cs.surfaceVariant)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(fraction)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(cs.onSurface)
+            )
+        }
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(text = statusText, fontSize = 13.sp, color = cs.onSurfaceVariant)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = if (etaSeconds == null) {
+                if (thai) "กำลังคำนวณเวลา..." else "Estimating time..."
+            } else {
+                if (thai) "เหลืออีกประมาณ ${formatEta(etaSeconds, true)}"
+                else "About ${formatEta(etaSeconds, false)} left"
+            },
+            fontSize = 13.sp,
+            color = cs.onSurfaceVariant
+        )
+    }
+}
+
+/** หน้าผลลัพธ์: กรอบพอดีกับสัดส่วนภาพ ไม่มีแถบดำ */
+@Composable
+private fun ResultView(
+    data: ResultData,
+    position: () -> Float,
+    onDrag: (Float) -> Unit,
+    onTap: (Float) -> Unit,
+    beforeLabel: String,
+    afterLabel: String,
+    timeText: String
+) {
+    val cs = MaterialTheme.colorScheme
+    val beforeImg = remember(data.before) { data.before.asImageBitmap() }
+    val afterImg = remember(data.previewAfter) { data.previewAfter.asImageBitmap() }
+    val ratio = data.before.width.toFloat() / data.before.height.toFloat()
+
+    Column(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth(),
+            contentAlignment = Alignment.Center
+        ) {
+            CompareView(
+                before = beforeImg,
+                after = afterImg,
+                position = position,
+                onDrag = onDrag,
+                onTap = onTap,
+                beforeLabel = beforeLabel,
+                afterLabel = afterLabel,
+                modifier = Modifier
+                    .aspectRatio(ratio)
+                    .clip(RoundedCornerShape(16.dp))
+            )
+        }
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(text = timeText, fontSize = 12.sp, color = cs.onSurfaceVariant)
     }
 }
 
@@ -682,25 +992,37 @@ fun MainScreen(
 private fun CompareView(
     before: ImageBitmap,
     after: ImageBitmap,
-    position: Float,
-    onPosition: (Float) -> Unit,
+    position: () -> Float,
+    onDrag: (Float) -> Unit,
+    onTap: (Float) -> Unit,
     beforeLabel: String,
-    afterLabel: String
+    afterLabel: String,
+    modifier: Modifier = Modifier
 ) {
-    val latestOnPosition by rememberUpdatedState(onPosition)
+    val latestOnDrag by rememberUpdatedState(onDrag)
+    val latestOnTap by rememberUpdatedState(onTap)
+    var dragging by remember { mutableStateOf(false) }
+    val handleScale by animateFloatAsState(
+        targetValue = if (dragging) 1.3f else 1f,
+        animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessMedium),
+        label = "handleScale"
+    )
 
     Box(
-        modifier = Modifier
-            .fillMaxSize()
+        modifier = modifier
             .pointerInput(Unit) {
-                detectHorizontalDragGestures { change, _ ->
+                detectHorizontalDragGestures(
+                    onDragStart = { dragging = true },
+                    onDragEnd = { dragging = false },
+                    onDragCancel = { dragging = false }
+                ) { change, _ ->
                     change.consume()
-                    latestOnPosition((change.position.x / size.width).coerceIn(0f, 1f))
+                    latestOnDrag((change.position.x / size.width).coerceIn(0f, 1f))
                 }
             }
             .pointerInput(Unit) {
                 detectTapGestures { offset ->
-                    latestOnPosition((offset.x / size.width).coerceIn(0f, 1f))
+                    latestOnTap((offset.x / size.width).coerceIn(0f, 1f))
                 }
             }
     ) {
@@ -716,21 +1038,30 @@ private fun CompareView(
             modifier = Modifier
                 .fillMaxSize()
                 .drawWithContent {
-                    clipRect(right = size.width * position) {
+                    clipRect(right = size.width * position()) {
                         this@drawWithContent.drawContent()
                     }
                 },
             contentScale = ContentScale.Fit
         )
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val x = size.width * position
+            val x = size.width * position()
             drawLine(
                 color = Color.White,
                 start = Offset(x, 0f),
                 end = Offset(x, size.height),
                 strokeWidth = 3f
             )
-            drawCircle(color = Color.White, radius = 14.dp.toPx(), center = Offset(x, size.height / 2f))
+            drawCircle(
+                color = Color(0x33000000),
+                radius = 17.dp.toPx() * handleScale,
+                center = Offset(x, size.height / 2f)
+            )
+            drawCircle(
+                color = Color.White,
+                radius = 14.dp.toPx() * handleScale,
+                center = Offset(x, size.height / 2f)
+            )
         }
         Box(
             modifier = Modifier
