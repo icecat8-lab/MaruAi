@@ -1,21 +1,37 @@
 package com.maru.upscaler.ui
 
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -32,18 +48,29 @@ fun MaruSettingsScreen(
     val cs = MaterialTheme.colorScheme
     fun tr(th: String, en: String) = if (lang == "th") th else en
 
+    var langMenuOpen by remember { mutableStateOf(false) }
+    var themeMenuOpen by remember { mutableStateOf(false) }
+
+    val themeLabel = when (themeMode) {
+        1 -> tr("สว่าง", "Light")
+        2 -> tr("มืด", "Dark")
+        else -> tr("ตามระบบ", "System")
+    }
+
     Surface(modifier = Modifier.fillMaxSize(), color = cs.background) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+                .padding(horizontal = 16.dp)
         ) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
+                IosIconButton(onClick = onBack) {
                     Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = cs.onBackground)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
@@ -54,7 +81,7 @@ fun MaruSettingsScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Text(
                 text = tr("ทั่วไป", "PREFERENCES"),
@@ -64,92 +91,96 @@ fun MaruSettingsScreen(
             )
 
             Card(
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(14.dp),
                 colors = CardDefaults.cardColors(containerColor = cs.surface),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onLangChange(if (lang == "th") "en" else "th") },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(tr("ภาษา", "Language"), fontSize = 16.sp, color = cs.onSurface)
-                        Text(
-                            text = if (lang == "th") "ไทย >" else "English >",
-                            fontSize = 16.sp,
-                            color = cs.onSurfaceVariant
-                        )
-                    }
+                Column {
+                    SettingRow(
+                        title = tr("ภาษา", "Language"),
+                        value = if (lang == "th") "ไทย" else "English",
+                        expanded = langMenuOpen,
+                        onExpandedChange = { langMenuOpen = it },
+                        options = listOf("th" to "ไทย", "en" to "English"),
+                        selectedKey = lang,
+                        onSelect = { onLangChange(it) }
+                    )
 
-                    Divider(color = cs.surfaceVariant, thickness = 0.5.dp)
+                    Divider(
+                        color = cs.surfaceVariant,
+                        thickness = 0.5.dp,
+                        modifier = Modifier.padding(start = 16.dp)
+                    )
 
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onThemeChange((themeMode + 1) % 3) },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(tr("ธีมแอป", "App Theme"), fontSize = 16.sp, color = cs.onSurface)
-                        Text(
-                            text = when (themeMode) {
-                                1 -> tr("สว่าง >", "Light >")
-                                2 -> tr("มืด >", "Dark >")
-                                else -> tr("ระบบ >", "System >")
-                            },
-                            fontSize = 16.sp,
-                            color = cs.onSurfaceVariant
-                        )
-                    }
+                    SettingRow(
+                        title = tr("ธีมแอป", "App Theme"),
+                        value = themeLabel,
+                        expanded = themeMenuOpen,
+                        onExpandedChange = { themeMenuOpen = it },
+                        options = listOf(
+                            "0" to tr("ตามระบบ", "System"),
+                            "1" to tr("สว่าง", "Light"),
+                            "2" to tr("มืด", "Dark")
+                        ),
+                        selectedKey = themeMode.toString(),
+                        onSelect = { onThemeChange(it.toInt()) }
+                    )
                 }
             }
+        }
+    }
+}
 
-            Spacer(modifier = Modifier.height(20.dp))
+@Composable
+private fun SettingRow(
+    title: String,
+    value: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    options: List<Pair<String, String>>,
+    selectedKey: String,
+    onSelect: (String) -> Unit
+) {
+    val cs = MaterialTheme.colorScheme
 
-            Text(
-                text = tr("เกี่ยวกับ", "ABOUT"),
-                fontSize = 12.sp,
-                color = cs.onSurfaceVariant,
-                modifier = Modifier.padding(start = 8.dp, bottom = 6.dp)
-            )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .iosClickable(pressedScale = 1f) { onExpandedChange(true) }
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, fontSize = 16.sp, color = cs.onSurface)
 
-            Card(
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = cs.surface),
-                modifier = Modifier.fillMaxWidth()
+        Box {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(value, fontSize = 16.sp, color = cs.onSurfaceVariant)
+                Icon(
+                    Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = cs.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            DropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { onExpandedChange(false) }
             ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    Column {
-                        Text(tr("โมเดล", "Model"), fontSize = 16.sp, color = cs.onSurface)
-                        Text(
-                            text = tr(
-                                "Maru — โมเดลอัปสเกล RRDB x4 ที่เทรนเองตั้งแต่ศูนย์",
-                                "Maru — an RRDB x4 upscaler trained from scratch"
-                            ),
-                            fontSize = 13.sp,
-                            color = cs.onSurfaceVariant
-                        )
-                    }
-
-                    Divider(color = cs.surfaceVariant, thickness = 0.5.dp)
-
-                    Column {
-                        Text(tr("ไลบรารีโอเพนซอร์ส", "Open-source libraries"), fontSize = 16.sp, color = cs.onSurface)
-                        Text(
-                            text = "ncnn — © Tencent, BSD 3-Clause License\nhttps://github.com/Tencent/ncnn",
-                            fontSize = 13.sp,
-                            color = cs.onSurfaceVariant
-                        )
-                    }
+                options.forEach { (key, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label, fontSize = 16.sp) },
+                        trailingIcon = {
+                            if (key == selectedKey) {
+                                Icon(Icons.Default.Check, contentDescription = null)
+                            }
+                        },
+                        onClick = {
+                            onSelect(key)
+                            onExpandedChange(false)
+                        }
+                    )
                 }
             }
         }
