@@ -1,6 +1,6 @@
-// maru_engine.cpp — Maru Upscaler native engine (NCNN + Vulkan, GPU เท่านั้น)
+// maru_engine.cpp — Maru Upscaler native engine (NCNN)
+// อัปสเกลด้วย Vulkan GPU, classifier (โครงข่ายเล็ก) รันบน CPU
 // เลือกโมเดลอัตโนมัติ: classifier ตัดสินประเภทภาพ -> Kotlin เลือกโมเดล -> engine โหลดโมเดลนั้นตอนจำเป็น
-// งานคำนวณของโครงข่ายทุกตัว (classifier + โมเดลอัปสเกล) รันบน GPU ไม่มีการสลับไปใช้ CPU
 //
 // ฝั่ง Kotlin (class MainActivity):
 //   external fun initEngineNative(assetManager: AssetManager): Int
@@ -12,7 +12,6 @@
 //   external fun upscaleBitmapNative(input: Bitmap, output: Bitmap, modelId: Int, cb: MaruProgress?): Int
 //       0 สำเร็จ, 1 โมเดลไม่พร้อม, 2 bitmap ไม่ถูกต้อง, 3 ถูกยกเลิก, 4 GPU อนุมานล้มเหลว, 5 โมเดลไม่ใช่ x4
 //   external fun cancelNative()
-//   external fun engineBackendNative(): Int      // 2 = GPU (Vulkan) หลังอัปสเกลสำเร็จ, 0 = ยังไม่เคย
 //
 // bitmap ต้องเป็น ARGB_8888 และ output ต้องกว้าง/สูง = input x 4 พอดี (ทุกโมเดลต้องเป็น x4)
 // ชื่อ blob อินพุต/เอาต์พุตอ่านจากไฟล์ .param อัตโนมัติ (ตัวแรกของแต่ละฝั่ง)
@@ -30,6 +29,7 @@
 #include <mutex>
 #include <string>
 
+#include "cpu.h"
 #include "gpu.h"
 #include "net.h"
 
@@ -46,9 +46,7 @@ namespace {
 constexpr const char* kClsParam = "classifier.param";
 constexpr const char* kClsBin = "classifier.bin";
 
-constexpr int kModelAnime = 0;
-constexpr int kModelPhoto = 1;
-constexpr int kModelCount = 2;
+constexpr int kModelCount = 2;  // 0 = anime, 1 = photo
 
 constexpr int kScale = 4;
 constexpr int kTilePad = 10;
@@ -89,13 +87,18 @@ jobject g_assetRef = nullptr;
 AAssetManager* g_mgr = nullptr;
 std::mutex g_mutex;
 std::atomic<bool> g_cancel{false};
-std::atomic<int> g_lastBackend{0};
 
-void configure(ncnn::Net& net) {
-    net.opt.use_vulkan_compute = true;
+void configure(ncnn::Net& net, bool useGpu) {
     net.opt.lightmode = true;
-    net.opt.num_threads = 1;  // งานหนักอยู่บน GPU ทั้งหมด
-    net.set_vulkan_device(g_gpuIndex);
+    if (useGpu) {
+        net.opt.use_vulkan_compute = true;
+        net.opt.num_threads = 1;  // งานหนักอยู่บน GPU
+        net.set_vulkan_device(g_gpuIndex);
+    } else {
+        net.opt.use_vulkan_compute = false;
+        int big = ncnn::get_big_cpu_count();
+        net.opt.num_threads = big > 0 ? std::min(big, 4) : 2;
+    }
 }
 
 bool assetExists(AAssetManager* mgr, const char* name) {
@@ -105,10 +108,10 @@ bool assetExists(AAssetManager* mgr, const char* name) {
     return true;
 }
 
-bool loadNet(ncnn::Net& net, AAssetManager* mgr, const char* param, const char* bin,
+bool loadNet(ncnn::Net& net, AAssetManager* mgr, const char* param, const char* bin, bool useGpu,
              std::string& inName, std::string& outName) {
     net.clear();
-    configure(net);
+    configure(net, useGpu);
     if (net.load_param(mgr, param) != 0) {
         LOGE("load_param ล้มเหลว: %s (ถ้าขึ้นต้นด้วย pnnx.* แปลว่ายังไม่ใช่ฟอร์แมต ncnn)", param);
         net.clear();
@@ -128,11 +131,11 @@ bool loadNet(ncnn::Net& net, AAssetManager* mgr, const char* param, const char* 
     }
     inName = ins[0];
     outName = outs[0];
-    LOGI("โหลด %s ok (GPU) in=%s out=%s", param, inName.c_str(), outName.c_str());
+    LOGI("โหลด %s ok (%s) in=%s out=%s", param, useGpu ? "GPU" : "CPU", inName.c_str(), outName.c_str());
     return true;
 }
 
-// โหลดโมเดลตอนต้องใช้ (เรียกขณะถือ g_mutex)
+// โหลดโมเดลอัปสเกลตอนต้องใช้ (เรียกขณะถือ g_mutex)
 bool ensureModel(int id) {
     if (id < 0 || id >= kModelCount || !g_gpuReady) return false;
     Model& m = g_models[id];
@@ -144,7 +147,7 @@ bool ensureModel(int id) {
         LOGI("ไม่พบไฟล์โมเดล %s (ข้าม)", m.param);
         return false;
     }
-    m.loaded = loadNet(m.net, g_mgr, m.param, m.bin, m.in, m.out);
+    m.loaded = loadNet(m.net, g_mgr, m.param, m.bin, true, m.in, m.out);
     return m.loaded;
 }
 
@@ -308,8 +311,9 @@ Java_com_maru_upscaler_MainActivity_initEngineNative(JNIEnv* env, jobject /*thiz
     g_gpuIndex = ncnn::get_default_gpu_index();
     g_gpuReady = true;
 
+    // classifier เป็นโครงข่ายเล็ก รันบน CPU เร็วพอและไม่ต้องเตรียม GPU เพิ่ม
     g_clsLoaded = assetExists(g_mgr, kClsParam) && assetExists(g_mgr, kClsBin) &&
-                  loadNet(g_cls, g_mgr, kClsParam, kClsBin, g_clsIn, g_clsOut);
+                  loadNet(g_cls, g_mgr, kClsParam, kClsBin, false, g_clsIn, g_clsOut);
 
     g_initialized = true;
     LOGI("initEngine gpu=%d classifier=%d", g_gpuIndex, g_clsLoaded ? 1 : 0);
@@ -320,11 +324,6 @@ JNIEXPORT jboolean JNICALL
 Java_com_maru_upscaler_MainActivity_hasModelNative(JNIEnv* /*env*/, jobject /*thiz*/, jint modelId) {
     std::lock_guard<std::mutex> lock(g_mutex);
     return ensureModel(modelId) ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT jint JNICALL
-Java_com_maru_upscaler_MainActivity_engineBackendNative(JNIEnv* /*env*/, jobject /*thiz*/) {
-    return g_lastBackend.load();
 }
 
 JNIEXPORT jfloat JNICALL
@@ -405,13 +404,12 @@ Java_com_maru_upscaler_MainActivity_upscaleBitmapNative(JNIEnv* env, jobject /*t
         if (rc != kInferFail || tile <= kMinTile) break;
         tile = std::max(kMinTile, tile / 2);
         LOGE("ลองใหม่ด้วย tile=%d", tile);
-        if (!loadNet(model.net, g_mgr, model.param, model.bin, model.in, model.out)) {
+        if (!loadNet(model.net, g_mgr, model.param, model.bin, true, model.in, model.out)) {
             model.loaded = false;
             model.tried = false;
             return kInferFail;
         }
     }
-    if (rc == kOk) g_lastBackend = 2;
     return rc;
 }
 
