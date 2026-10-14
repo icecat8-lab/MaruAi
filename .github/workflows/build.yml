@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version_tag:
-        description: 'ตั้งชื่อเวอร์ชัน (เช่น v1.0-debug)'
+        description: 'ตั้งชื่อเวอร์ชัน'
         required: true
-        default: 'v1.0-debug'
+        default: 'v1.0'
 
 jobs:
   build-and-release:
