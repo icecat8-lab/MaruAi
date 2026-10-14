@@ -3,7 +3,8 @@
 
     <uses-feature
         android:name="android.hardware.vulkan.version"
-        android:required="false" />
+        android:version="0x400003"
+        android:required="true" />
 
     
     <uses-permission
