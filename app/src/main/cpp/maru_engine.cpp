@@ -43,8 +43,8 @@
 
 namespace {
 
-constexpr const char* kClsParam = "Maru_classifier_opt.param";
-constexpr const char* kClsBin = "Maru_classifier_opt.bin";
+constexpr const char* kClsParam = "classifier.param";
+constexpr const char* kClsBin = "classifier.bin";
 
 constexpr int kModelAnime = 0;
 constexpr int kModelPhoto = 1;
@@ -74,8 +74,8 @@ struct Model {
 };
 
 Model g_models[kModelCount] = {
-    Model("Maru_anime-x4_opt.param", "Maru_anime-x4_opt.bin"),
-    Model("Maru_photo-x4_opt.param", "Maru_photo-x4_opt.bin"),
+    Model("maru_anime_x4.param", "maru_anime_x4.bin"),
+    Model("maru_photo_x4.param", "maru_photo_x4.bin"),
 };
 
 ncnn::Net g_cls;
