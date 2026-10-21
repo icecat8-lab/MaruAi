@@ -17,7 +17,7 @@ Image Upscaler Application for Android powered by RRDBNet Architecture.
 ---
 
 ## 🌟 Overview
-**MaruAi** is an Android application designed for **4x image upscaling**. the application ensures processing, low latency, and absolute user data privacy without relying on external cloud servers.
+**MaruAi** is an Android application designed for **4x image upscaling**. the application user data privacy without relying on external cloud servers.
 
 ## 🛠️ Technical Stack
 - **AI Architecture:** Utilizes the advanced **RRDBNet (Residual in Residual Dense Block)** architecture, significantly preserving sharp edges, line art, and vibrant colors specifically optimized for illustrations.
