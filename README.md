@@ -1,6 +1,6 @@
 # MaruAi
 
-A High-Performance On-Device Image Upscaler Application for Android powered by RRDBNet Architecture.
+Image Upscaler Application for Android powered by RRDBNet Architecture.
 
 <br />
 
