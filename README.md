@@ -25,7 +25,7 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 ## 🚀 Quick Start
 1. Clone the repository:
    ```bash
-   git clone https://github.com
+   git clone https://github.com/icecat8-lab/MaruAi
    ```
 2. Open the project in the latest version of **Android Studio**.
 3. Ensure **Android NDK** and **CMake** are installed via the SDK Manager.
