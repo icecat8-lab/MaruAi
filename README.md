@@ -8,15 +8,6 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
   <a href="https://github.com/icecat8-lab/VVA">
     <img src="https://img.shields.io/badge/VVA-Framework-blue?style=flat-square&logo=github" alt="VVA Framework" />
   </a>
-  <a href="https://www.android.com">
-    <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Platform Android" />
-  </a>
-  <a href="https://kotlinlang.org">
-    <img src="https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
-  </a>
-  <a href="https://isocpp.org">
-    <img src="https://img.shields.io/badge/Engine-C%++%20NDK-00599C?style=flat-square&logo=c%++&logoColor=white" alt="C++ NDK" />
-  </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License MIT" />
   </a>
