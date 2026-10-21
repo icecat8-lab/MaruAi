@@ -6,7 +6,19 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 
 <p align="left">
   <a href="https://github.com/icecat8-lab/VVA">
-    <img src="https://shields.io" alt="VVA Framework" />
+    <img src="https://img.shields.io/badge/VVA-Framework-blue?style=flat-square&logo=github" alt="VVA Framework" />
+  </a>
+  <a href="https://www.android.com">
+    <img src="https://img.shields.io/badge/Platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Platform Android" />
+  </a>
+  <a href="https://kotlinlang.org">
+    <img src="https://img.shields.io/badge/Language-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
+  </a>
+  <a href="https://isocpp.org">
+    <img src="https://img.shields.io/badge/Engine-C%++%20NDK-00599C?style=flat-square&logo=c%++&logoColor=white" alt="C++ NDK" />
+  </a>
+  <a href="LICENSE">
+    <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License MIT" />
   </a>
 </p>
 
@@ -17,9 +29,9 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 **MaruAi** is an Android application designed for **4x anime image upscaling (x4)**. By implementing on-device deep learning inference, the application ensures high-speed processing, low latency, and absolute user data privacy without relying on external cloud servers.
 
 ## 🛠️ Technical Stack
-* **AI Architecture:** Utilizes the advanced **RRDBNet (Residual in Residual Dense Block)** architecture, significantly preserving sharp edges, line art, and vibrant colors specifically optimized for anime illustrations.
-* **Core Engine:** The core AI inference engine is implemented in **C++ via Android NDK**, maximizing hardware acceleration (GPU/NPU) to handle heavy neural network computations efficiently.
-* **UI & Frontend:** Developed primarily in **Kotlin** for a modern, responsive user experience and robust Android lifecycle management.
+- **AI Architecture:** Utilizes the advanced **RRDBNet (Residual in Residual Dense Block)** architecture, significantly preserving sharp edges, line art, and vibrant colors specifically optimized for anime illustrations.
+- **Core Engine:** The core AI inference engine is implemented in **C++ via Android NDK**, maximizing hardware acceleration (GPU/NPU) to handle heavy neural network computations efficiently.
+- **UI & Frontend:** Developed primarily in **Kotlin** for a modern, responsive user experience and robust Android lifecycle management.
 
 ---
 
@@ -28,5 +40,3 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 | Main Screen | Settings Screen |
 | :---: | :---: |
 | <img src="YOUR_IMAGE_URL_1" width="240" /> | <img src="YOUR_IMAGE_URL_2" width="240" /> |
-
----
