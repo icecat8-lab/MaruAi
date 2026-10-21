@@ -9,7 +9,7 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
     <img src="https://img.shields.io/badge/VVA-Framework-blue?style=flat-square&logo=github" alt="VVA Framework" />
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square" alt="License MIT" />
+    <img src="https://img.shields.io/badge/Apache-License 2.0-yellow.svg?style=flat-square" alt="Apache License 2.0" />
   </a>
 </p>
 
