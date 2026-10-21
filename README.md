@@ -1,4 +1,4 @@
-# 🤖 MaruAi (MaruUpscaler)
+#MaruAi
 
 A High-Performance On-Device Anime Image Upscaler Application for Android powered by RRDBNet Architecture.
 
@@ -21,7 +21,7 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 
 ## 🛠️ Technical Stack
 - **AI Architecture:** Utilizes the advanced **RRDBNet (Residual in Residual Dense Block)** architecture, significantly preserving sharp edges, line art, and vibrant colors specifically optimized for anime illustrations.
-- **Core Engine:** The core AI inference engine is implemented in **C++ via Android NDK**, maximizing hardware acceleration (GPU/NPU) to handle heavy neural network computations efficiently.
+- **Core Engine:** The core AI inference engine is implemented in **C++**, maximizing hardware acceleration (GPU/NPU) to handle heavy neural network computations efficiently.
 - **UI & Frontend:** Developed primarily in **Kotlin** for a modern, responsive user experience and robust Android lifecycle management.
 
 ---
