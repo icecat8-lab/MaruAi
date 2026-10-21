@@ -20,7 +20,7 @@ Image Upscaler Application for Android powered by RRDBNet Architecture.
 **MaruAi** is an Android application designed for **4x image upscaling**. By implementing on-device deep learning inference, the application ensures high-speed processing, low latency, and absolute user data privacy without relying on external cloud servers.
 
 ## 🛠️ Technical Stack
-- **AI Architecture:** Utilizes the advanced **RRDBNet (Residual in Residual Dense Block)** architecture, significantly preserving sharp edges, line art, and vibrant colors specifically optimized for anime illustrations.
+- **AI Architecture:** Utilizes the advanced **RRDBNet (Residual in Residual Dense Block)** architecture, significantly preserving sharp edges, line art, and vibrant colors specifically optimized for illustrations.
 - **Core Engine:** The core AI inference engine is implemented in **C++**, maximizing hardware acceleration to handle heavy neural network computations efficiently.
 - **UI & Frontend:** Developed primarily in **Kotlin** for a modern, responsive user experience and robust Android lifecycle management.
 
