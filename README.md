@@ -5,8 +5,11 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 <br />
 
 <p align="left">
-  <img src="[https://shields.io](https://github.com/icecat8-lab/VVA)" alt="VVA" />
+  <a href="https://github.com/icecat8-lab/VVA">
+    <img src="https://shields.io" alt="VVA Framework" />
+  </a>
 </p>
+
 
 ---
 
