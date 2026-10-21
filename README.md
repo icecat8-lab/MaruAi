@@ -5,10 +5,7 @@ A High-Performance On-Device Anime Image Upscaler Application for Android powere
 <br />
 
 <p align="left">
-  <img src="https://shields.io" alt="Android" />
-  <img src="https://shields.io" alt="Kotlin" />
-  <img src="https://shields.io" alt="C++" />
-  <img src="https://shields.io" alt="RRDBNet" />
+  <img src="[https://shields.io](https://github.com/icecat8-lab/VVA)" alt="VVA" />
 </p>
 
 ---
